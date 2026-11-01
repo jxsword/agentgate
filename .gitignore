@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# agentgate runtime state
+.agentgate/
+examples/demo_sandbox/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
