@@ -13,6 +13,9 @@ htmlcov/
 .agentgate/
 examples/demo_sandbox/
 
+# security-scan tooling working dir
+.mimosa/
+
 # OS / editor
 .DS_Store
 Thumbs.db
