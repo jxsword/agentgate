@@ -16,7 +16,10 @@ out of the state directory.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
+import os
 import re
 import time
 import uuid
@@ -26,6 +29,37 @@ from typing import Any
 from .policy import canonical_args
 
 REQUEST_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+
+SECRET_ENV = "AGENTGATE_APPROVAL_SECRET"
+
+
+def approval_secret() -> str | None:
+    """Shared approval-signing secret; empty/unset means signatures are off.
+
+    v0.2 (EX-3): when set, `decide` signs and the gateway verifies the human
+    decision (HMAC-SHA256), so a rogue local process cannot forge approvals.
+    The secret only ever comes from the environment - never from files or code.
+    """
+    secret = os.environ.get(SECRET_ENV, "")
+    return secret or None
+
+
+def _signature(request_id: str, allow: bool, approver: str, decided_at: str,
+               arguments_hash: str, secret: str) -> str:
+    payload = f"{request_id}|{allow}|{approver}|{decided_at}|{arguments_hash}"
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_decision(request: dict[str, Any], decision: dict[str, Any], secret: str) -> bool:
+    """Verify a decision's HMAC against its pending request. Unsigned -> invalid."""
+    sig = decision.get("sig")
+    if not sig:
+        return False
+    expected = _signature(
+        str(decision.get("id")), bool(decision.get("allow")), str(decision.get("approver")),
+        str(decision.get("decided_at")), str(request.get("arguments_hash")), secret,
+    )
+    return hmac.compare_digest(sig, expected)
 
 
 class ApprovalError(RuntimeError):
@@ -119,6 +153,13 @@ class ApprovalManager:
             "approver": approver,
             "decided_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         }
+        secret = approval_secret()
+        if secret:
+            request = json.loads(pending_path.read_text(encoding="utf-8"))
+            decision["sig"] = _signature(
+                request_id, allow, approver, decision["decided_at"],
+                str(request.get("arguments_hash")), secret,
+            )
         decision_path.write_text(
             json.dumps(decision, ensure_ascii=False, indent=2), encoding="utf-8"
         )

@@ -113,3 +113,18 @@ class PolicyEngine:
                     rule=f"agents.{agent}.servers.{server}.default",
                 )
         return Decision(action=self.config.default_decision, rule="default_decision")
+
+    def check_capability(self, agent: str, server: str, kind: str) -> tuple[bool, str]:
+        """Non-tool capability check (prompts/resources). Returns (allowed, rule).
+
+        Fail-closed: unknown agent/server -> deny; only explicit allow opens it.
+        """
+        rule_name = f"agents.{agent}.servers.{server}.{kind}"
+        apol = self.config.agents.get(agent)
+        if apol is None:
+            return False, "default_decision"
+        spol = apol.servers.get(server)
+        if spol is None:
+            return False, "default_decision"
+        value = getattr(spol, kind)
+        return (value == ALLOW), rule_name

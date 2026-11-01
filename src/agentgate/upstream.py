@@ -76,3 +76,37 @@ class Upstream:
         if self.session is None:
             raise UpstreamError(f"upstream '{self.name}' not started")
         return await self.session.call_tool(name, arguments or {})
+
+    # ---- non-tool capabilities (V1.1, EX-4) ----
+
+    async def _paged(self, fetch, key: str) -> list[Any]:
+        if self.session is None:
+            raise UpstreamError(f"upstream '{self.name}' not started")
+        out: list[Any] = []
+        cursor: str | None = None
+        while True:
+            params = types.PaginatedRequestParams(cursor=cursor) if cursor else None
+            result = await fetch(params=params)
+            out.extend(getattr(result, key))
+            cursor = result.next_cursor
+            if not cursor:
+                return out
+
+    async def list_prompts(self) -> list[types.Prompt]:
+        return await self._paged(self.session.list_prompts, "prompts")
+
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+        if self.session is None:
+            raise UpstreamError(f"upstream '{self.name}' not started")
+        return await self.session.get_prompt(name, arguments)
+
+    async def list_resources(self) -> list[types.Resource]:
+        return await self._paged(self.session.list_resources, "resources")
+
+    async def read_resource(self, uri: str) -> types.ReadResourceResult:
+        if self.session is None:
+            raise UpstreamError(f"upstream '{self.name}' not started")
+        return await self.session.read_resource(uri)
+
+    async def list_resource_templates(self) -> list[types.ResourceTemplate]:
+        return await self._paged(self.session.list_resource_templates, "resource_templates")

@@ -40,6 +40,9 @@ agentgate revoke <grant_id>       # 即时撤销
 - **人类审批**：文件式协议，无需端口、无需了解 MCP，任何终端可用
 - **范围委托**：批准一次 = 在 TTL 内（可选绑定到完全相同参数）重复放行，可随时 revoke
 - **审计**：JSONL 追加式、fsync 落盘，每次调用必有决策留痕
+- **prompts/resources 代理**（V1.1）：协议完整覆盖，server 级能力开关
+- **HTTP 入口**（V1.1）：`--http HOST:PORT`，多客户端共享一个网关
+- **审批签名**（V1.1）：`AGENTGATE_APPROVAL_SECRET` 环境变量启用 HMAC 验签，伪造裁决失效
 
 ## 文档
 

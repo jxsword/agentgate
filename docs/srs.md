@@ -141,6 +141,20 @@ JSONL、每行一个 JSON 对象（ts/event/字段按字母序）；写入 flush
 #### FR-AU-003 参数留痕 P0 V1.0
 审计记录参数哈希（canonical JSON）；arguments 原文仅写入 `approval_requested` 的 pending 文件（供人类审阅），审计日志默认不含完整参数（降低敏感数据扩散面）。
 
+### 3.6 模块：V1.1 增量需求（依据 DR-003，用户授权的扩展）
+
+#### FR-GW-007 HTTP 网关入口 P1 V1.1
+`agentgate run --http HOST:PORT` 以 streamable HTTP 对外服务（路径 `/mcp`），多个客户端共享一个网关进程；agent 身份仍来自 `--agent`。localhost 绑定时 SDK 自动启用 DNS rebinding 防护。审计 `gateway_start` 增加 transport/http 字段。
+
+#### FR-GW-008 prompts/resources 代理 P1 V1.1
+prompts（命名空间 `<server>--<prompt>`）与 resources（URI 原样保留）按策略代理：`list_prompts/get_prompt/list_resources/read_resource/list_resource_templates`。URI 路由按各允许 server 的 listing 建立；未知 URI 在允许的 server 上逐个探测。拒绝与未知均以对应 Result 类型的可读文本返回（fail-closed），并审计 `prompt_call/prompt_denied/resource_call/resource_denied`。
+
+#### FR-PL-005 能力开关 P1 V1.1
+server 策略级 `prompts:` / `resources:` 键，取值仅 allow|deny（默认 deny）；`ask` 不适用于只读列举。非法取值在加载期报错。
+
+#### FR-AP-007 审批签名 P1 V1.1
+设置环境变量 `AGENTGATE_APPROVAL_SECRET` 后，`approve` 写入的决策附带 HMAC-SHA256 签名（载荷：id|allow|approver|decided_at|arguments_hash），网关验签；未签名/验签失败一律视为拒绝（fail-closed），审计 `approval_signature_invalid`。密钥仅来自环境变量（NFR-SEC-003）。
+
 ### 3.5 模块：CLI（CLI）
 
 #### FR-CLI-001 run P0 V1.0
@@ -239,6 +253,7 @@ v0.1 输出为英文（错误信息面向开发者）；代码与文档 UTF-8，
 |---|---|---|---|
 | V0.1 | 2026-11-02 | 初稿 | 阶段2产出 |
 | V1.0 | 2026-11-02 | 两轮复审修正后定稿（见 8.4） | 用户预授权的自行复审 |
+| V1.1 | 2026-11-02 | 依据 DR-003 追加 §3.6 增量需求：FR-GW-007（HTTP 入口）、FR-GW-008（prompts/resources 代理）、FR-PL-005（能力开关）、FR-AP-007（审批签名）；§7 扩展清单中 EX-1/3/4 移入本版实现 | 用户授权的扩展决策 |
 
 ### 8.4 审核日志（两轮自行复审）
 **第 1 轮（完整性）**——发现并修正：① 补 FR-AU-003（参数留痕边界：审计默认不含完整参数，仅哈希；pending 文件含原文供人类审阅），原稿未定义敏感参数扩散面；② 补 NFR-COMPAT-001 与 NFR-PERF-001/002 量化（原稿性能/兼容为定性）；③ 补 FR-GW-006 上游故障隔离与"全部失败拒绝启动"语义；④ 8.1 矩阵补充 NFR 映射。

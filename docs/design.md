@@ -210,6 +210,23 @@ agentgate revoke   <grant_id> [--state-dir D]
 - **性能**：e2e 内嵌计时断言（NFR-PERF-001/002），非门禁。
 - 覆盖率门禁：核心模块 ≥ 85%（NFR-MAINT-001）。
 
+## 9. V1.1 增量设计（EX-4 / EX-1 / EX-3，DR-003）
+
+### 9.1 prompts/resources 代理（EX-4）
+- 能力开关：server 策略级 `prompts:` / `resources:`（allow|deny，默认 deny，fail-closed）。
+- prompts 命名空间同工具：`<server>--<prompt>`；resources URI 不改名，`resources/read` 先按各允许 server 的 listing 定位，再逐个探测（首个成功者胜出，审计记录实际 server）。
+- 拒绝路径返回对应 Result 类型（GetPromptResult / ReadResourceResult）的可读文本——prompts/resources 协议无 isError 标志，拒绝语义以文本承载。
+
+### 9.2 HTTP 网关入口（EX-1）
+- `agentgate run --http HOST:PORT`：`Server.streamable_http_app()`（SDK 2.x 已内联 lifespan）+ uvicorn；路径 `/mcp`。
+- 身份模型：仍为单 agent（`--agent`）服务多客户端连接；多 agent = 多进程/多端口（避免引入 header 信任问题）。
+- localhost 绑定由 SDK 自动启用 DNS rebinding 防护。
+
+### 9.3 审批 HMAC 签名（EX-3）
+- 密钥：仅环境变量 `AGENTGATE_APPROVAL_SECRET`（空/未设 = 关闭，兼容 v0.1 工作流）。
+- 签名：approve 时对 `id|allow|approver|decided_at|arguments_hash` 计算 HMAC-SHA256 写入 decision 文件 `sig` 字段；网关在消费决策前验签（hmac.compare_digest）。
+- 失败语义：未签名或验签失败 → 视为拒绝 + `approval_signature_invalid` 审计（fail-closed）。签名把"伪造 decisions 文件"从"写个 JSON 即可"提升为"需持有共享密钥"，闭环了设计文档 §6 的已知局限之一。
+
 ## 8. 部署形态
 
 ```mermaid

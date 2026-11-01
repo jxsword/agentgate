@@ -40,7 +40,7 @@ def cmd_run(args) -> int:
         format="[agentgate] %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
-    serve_sync(config, agent=args.agent, state_dir=args.state_dir)
+    serve_sync(config, agent=args.agent, state_dir=args.state_dir, http=args.http)
     return 0
 
 
@@ -110,12 +110,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"agentgate {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_run = sub.add_parser("run", help="run the gateway over stdio (front of MCP clients)")
+    p_run = sub.add_parser("run", help="run the gateway (stdio by default, or --http)")
     p_run.add_argument("--config", required=True, help="path to policy YAML")
     p_run.add_argument("--agent", required=True, help="agent identity name (policy key under agents:)")
     p_run.add_argument("--state-dir", default=None, help="state directory (default .agentgate or policy state_dir)")
     p_run.add_argument("--on-ask", choices=["pending", "deny"], help="override on_ask behaviour")
     p_run.add_argument("--ask-timeout", type=int, help="override ask timeout seconds")
+    p_run.add_argument("--http", default=None, metavar="HOST:PORT",
+                       help="serve streamable HTTP instead of stdio (EX-1)")
     p_run.set_defaults(func=cmd_run)
 
     p_pending = sub.add_parser("pending", help="list pending approval requests")

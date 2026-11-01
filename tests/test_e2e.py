@@ -123,6 +123,7 @@ async def open_session(workdir: Path, cfg: Path):
 
 @pytest.fixture
 def workdir(tmp_path: Path) -> Path:
+    """Per-test workspace (defined in conftest.py; kept for direct imports)."""
     return tmp_path
 
 

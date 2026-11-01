@@ -83,10 +83,20 @@ class ServerPolicy:
 
     default: str = DENY
     rules: list[ToolRule] = field(default_factory=list)
+    # non-tool capabilities (V1.1, EX-4): allow | deny only — human approval for
+    # read-only listing is deliberately out of scope; default deny keeps fail-closed
+    prompts: str = DENY
+    resources: str = DENY
 
     def __post_init__(self) -> None:
         if self.default not in DECISIONS:
             raise ConfigError(f"server policy default must be one of {DECISIONS}, got {self.default!r}")
+        for kind in ("prompts", "resources"):
+            value = getattr(self, kind)
+            if value not in (ALLOW, DENY):
+                raise ConfigError(
+                    f"server policy {kind} must be 'allow' or 'deny', got {value!r}"
+                )
 
 
 @dataclass
@@ -175,7 +185,12 @@ def _parse_server_policy(server: str, raw: object) -> ServerPolicy:
         raise ConfigError(f"agents.*.servers.{server}.tools: expected mapping")
     for pattern, rule in tools.items():
         rules.append(_parse_tool_rule(server, str(pattern), rule))
-    return ServerPolicy(default=str(raw.get("default", DENY)), rules=rules)
+    return ServerPolicy(
+        default=str(raw.get("default", DENY)),
+        rules=rules,
+        prompts=str(raw.get("prompts", DENY)),
+        resources=str(raw.get("resources", DENY)),
+    )
 
 
 def _parse_server_config(name: str, raw: dict) -> ServerConfig:

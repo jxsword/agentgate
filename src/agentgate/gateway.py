@@ -18,7 +18,7 @@ import mcp_types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from .approvals import ApprovalManager
+from .approvals import ApprovalManager, approval_secret, verify_decision
 from .audit import AuditLog
 from .config import Config
 from .grants import GrantStore
@@ -215,6 +215,20 @@ class Gateway:
                 f"({self.config.ask_timeout_seconds}s). Denied (fail-closed)."
             )
 
+        # EX-3: when AGENTGATE_APPROVAL_SECRET is set, decisions must carry a
+        # valid HMAC. An invalid/unsigned decision counts as denial (fail-closed).
+        secret = approval_secret()
+        if secret is not None and not verify_decision(request, human, secret):
+            self.approvals.remove_request(request["id"])
+            self.audit.append(
+                "approval_signature_invalid", request_id=request["id"], approver=human.get("approver"),
+                **base,
+            )
+            return error_result(
+                f"agentgate: approval decision for {full_name!r} failed signature "
+                f"verification. Denied (fail-closed)."
+            )
+
         if not human.get("allow"):
             self.audit.append(
                 "ask_denied", request_id=request["id"], approver=human.get("approver"), **base
@@ -249,6 +263,138 @@ class Gateway:
         )
         return await self._proxy(server, tool, arguments, proxied, base, "ask_allowed")
 
+    # ---- non-tool capability handlers (V1.1, EX-4) ----
+
+    def _allowed_servers(self, kind: str) -> list[str]:
+        return [
+            name for name in self.upstreams
+            if self.engine.check_capability(self.agent, name, kind)[0]
+        ]
+
+    def _deny_capability(self, kind: str, detail: dict[str, Any], text: str) -> types.CallToolResult:
+        self.audit.append(f"{kind}_denied", decision="deny", **detail)
+        return error_result(text)
+
+    @staticmethod
+    def _denial_message(text: str) -> list[types.PromptMessage]:
+        return [types.PromptMessage(
+            role="user", content=types.TextContent(type="text", text=text)
+        )]
+
+    async def _list_prompts(self, ctx, params) -> types.ListPromptsResult:
+        merged: list[types.Prompt] = []
+        for name in self._allowed_servers("prompts"):
+            try:
+                for prompt in await self.upstreams[name].list_prompts():
+                    merged.append(
+                        types.Prompt(
+                            name=f"{name}{NS_SEP}{prompt.name}",
+                            description=prompt.description,
+                            arguments=list(prompt.arguments or []),
+                        )
+                    )
+            except Exception as e:  # noqa: BLE001
+                print(f"[agentgate] list_prompts failed for '{name}': {e}", file=sys.stderr)
+        return types.ListPromptsResult(prompts=merged)
+
+    async def _get_prompt(self, ctx, params: types.GetPromptRequestParams) -> types.GetPromptResult:
+        parsed = split_tool_name(params.name)
+        detail = dict(agent=self.agent, prompt=params.name, rule="unknown_prompt")
+        if parsed is None or parsed[0] not in self.upstreams:
+            self.audit.append("prompt_denied", decision="deny", **detail)
+            return types.GetPromptResult(messages=self._denial_message(
+                f"agentgate: unknown prompt {params.name!r} (namespaced '<server>--<prompt>')"
+            ))
+        server, prompt_name = parsed
+        allowed, rule = self.engine.check_capability(self.agent, server, "prompts")
+        detail.update(server=server, prompt=prompt_name, rule=rule)
+        if not allowed:
+            self.audit.append("prompt_denied", decision="deny", **detail)
+            return types.GetPromptResult(messages=self._denial_message(
+                f"agentgate: prompts on server '{server}' denied by policy (rule: {rule})."
+            ))
+        self.audit.append("prompt_call", decision="allow", **detail)
+        try:
+            return await self.upstreams[server].get_prompt(prompt_name, dict(params.arguments or {}))
+        except Exception as e:  # noqa: BLE001
+            self.audit.append("upstream_error", error=str(e), **detail)
+            return error_result(f"agentgate: upstream '{server}' failed: {e}")
+
+    async def _list_resources(self, ctx, params) -> types.ListResourcesResult:
+        merged: list[types.Resource] = []
+        seen: set[str] = set()
+        for name in self._allowed_servers("resources"):
+            try:
+                for resource in await self.upstreams[name].list_resources():
+                    if resource.uri in seen:  # first allowed server wins on URI collision
+                        continue
+                    seen.add(resource.uri)
+                    merged.append(resource)
+            except Exception as e:  # noqa: BLE001
+                print(f"[agentgate] list_resources failed for '{name}': {e}", file=sys.stderr)
+        return types.ListResourcesResult(resources=merged)
+
+    async def _list_resource_templates(self, ctx, params) -> types.ListResourceTemplatesResult:
+        merged: list[types.ResourceTemplate] = []
+        for name in self._allowed_servers("resources"):
+            try:
+                for template in await self.upstreams[name].list_resource_templates():
+                    merged.append(
+                        types.ResourceTemplate(
+                            uri_template=template.uri_template,
+                            name=f"{name}{NS_SEP}{template.name}" if template.name else template.name,
+                            description=template.description,
+                            mime_type=template.mime_type,
+                        )
+                    )
+            except Exception as e:  # noqa: BLE001
+                print(f"[agentgate] list_resource_templates failed for '{name}': {e}", file=sys.stderr)
+        return types.ListResourceTemplatesResult(resource_templates=merged)
+
+    async def _read_resource(self, ctx, params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
+        uri = str(params.uri)
+        detail = dict(agent=self.agent, uri=uri)
+        allowed = self._allowed_servers("resources")
+        # 1) try servers that advertised this URI; 2) otherwise probe allowed servers in order
+        candidates: list[str] = []
+        for name in allowed:
+            try:
+                resources = await self.upstreams[name].list_resources()
+            except Exception:  # noqa: BLE001 - listing failure must not block read probing
+                continue
+            if any(str(r.uri) == uri for r in resources):
+                candidates.append(name)
+        candidates += [n for n in allowed if n not in candidates]
+
+        last_error: Exception | None = None
+        for server in candidates:
+            probe = dict(detail, server=server)
+            allowed_rule = self.engine.check_capability(self.agent, server, "resources")
+            if not allowed_rule[0]:
+                continue
+            try:
+                result = await self.upstreams[server].read_resource(uri)
+            except Exception as e:  # noqa: BLE001 - not found on this server: try next
+                last_error = e
+                continue
+            self.audit.append(
+                "resource_call", decision="allow", server=server,
+                rule=f"agents.{self.agent}.servers.{server}.resources", **detail,
+            )
+            return result
+        self.audit.append(
+            "resource_denied", decision="deny", server=",".join(allowed) or "(none)",
+            rule="agents.*.servers.*.resources", error=str(last_error) if last_error else None,
+            **detail,
+        )
+        return types.ReadResourceResult(
+            contents=[types.TextResourceContents(
+                uri=uri, mime_type="text/plain",
+                text=f"agentgate: resource {uri!r} not reachable: not allowed by policy "
+                     f"or not found on any allowed server.",
+            )]
+        )
+
     # ---- lifecycle ----
 
     def build_server(self) -> Server:
@@ -256,6 +402,11 @@ class Gateway:
             f"agentgate-{self.agent}",
             on_list_tools=self._list_tools,
             on_call_tool=self._call_tool,
+            on_list_prompts=self._list_prompts,
+            on_get_prompt=self._get_prompt,
+            on_list_resources=self._list_resources,
+            on_list_resource_templates=self._list_resource_templates,
+            on_read_resource=self._read_resource,
         )
         return server
 
@@ -268,6 +419,7 @@ class Gateway:
                 agent=self.agent,
                 servers=sorted(self.upstreams),
                 on_ask=self.config.on_ask,
+                transport="stdio",
             )
             try:
                 async with stdio_server() as (read, write):
@@ -275,8 +427,36 @@ class Gateway:
             finally:
                 self.audit.append("gateway_stop", agent=self.agent)
 
+    async def run_http(self, host: str, port: int) -> None:
+        """Serve the same gateway over streamable HTTP (V1.1, EX-1).
 
-async def serve(config: Config, agent: str, state_dir: str | None = None) -> None:
+        Multiple clients can share one gateway process; the agent identity is
+        the --agent flag, applied to every connection.
+        """
+        import uvicorn
+
+        async with AsyncExitStack() as stack:
+            await self._start_upstreams(stack)
+            server = self.build_server()
+            app = server.streamable_http_app(host=host)
+            self.audit.append(
+                "gateway_start",
+                agent=self.agent,
+                servers=sorted(self.upstreams),
+                on_ask=self.config.on_ask,
+                transport="http",
+                http=f"{host}:{port}",
+            )
+            config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+            uvicorn_server = uvicorn.Server(config)
+            try:
+                await uvicorn_server.serve()
+            finally:
+                self.audit.append("gateway_stop", agent=self.agent)
+
+
+async def serve(config: Config, agent: str, state_dir: str | None = None,
+                http: str | None = None) -> None:
     from pathlib import Path
 
     state = Path(state_dir) if state_dir is not None else config.state_dir
@@ -286,8 +466,15 @@ async def serve(config: Config, agent: str, state_dir: str | None = None) -> Non
     approvals = ApprovalManager(state)
     engine = PolicyEngine(config, grants)
     gateway = Gateway(config, agent, engine, approvals, grants, audit)
-    await gateway.run_stdio()
+    if http:
+        host, _, port = http.rpartition(":")
+        if not host or not port.isdigit():
+            raise ValueError(f"--http expects HOST:PORT, got {http!r}")
+        await gateway.run_http(host, int(port))
+    else:
+        await gateway.run_stdio()
 
 
-def serve_sync(config: Config, agent: str, state_dir: str | None = None) -> None:
-    asyncio.run(serve(config, agent, state_dir))
+def serve_sync(config: Config, agent: str, state_dir: str | None = None,
+               http: str | None = None) -> None:
+    asyncio.run(serve(config, agent, state_dir, http))

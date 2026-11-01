@@ -108,7 +108,83 @@ async def main() -> None:
         except Exception as e:  # noqa: BLE001
             return text(f"error: {e}")
 
-    server = Server("demo-server", on_list_tools=list_tools, on_call_tool=call_tool)
+    # ---- prompts & resources (V1.1 demo) ----
+
+    async def list_prompts(ctx, params):
+        return types.ListPromptsResult(
+            prompts=[
+                types.Prompt(
+                    name="greet",
+                    description="Build a greeting message for a named user.",
+                    arguments=[
+                        types.PromptArgument(
+                            name="user", description="who to greet", required=True
+                        )
+                    ],
+                )
+            ]
+        )
+
+    async def get_prompt(ctx, params: types.GetPromptRequestParams):
+        if params.name != "greet":
+            return types.GetPromptResult(
+                description="unknown prompt",
+                messages=[types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(type="text", text=f"unknown prompt {params.name}"),
+                )],
+            )
+        user = (params.arguments or {}).get("user", "world")
+        return types.GetPromptResult(
+            description="greeting",
+            messages=[types.PromptMessage(
+                role="user",
+                content=types.TextContent(type="text", text=f"Hello, {user}!"),
+            )],
+        )
+
+    def _sandbox_files() -> list[Path]:
+        if not SANDBOX.exists():
+            return []
+        return [p for p in SANDBOX.rglob("*") if p.is_file()]
+
+    async def list_resources(ctx, params):
+        return types.ListResourcesResult(
+            resources=[
+                types.Resource(
+                    uri=f"demo://file/{p.relative_to(SANDBOX).as_posix()}",
+                    name=p.name,
+                    mime_type="text/plain",
+                    description="sandbox file",
+                )
+                for p in _sandbox_files()
+            ]
+        )
+
+    async def read_resource(ctx, params: types.ReadResourceRequestParams):
+        uri = str(params.uri)
+        if not uri.startswith("demo://file/"):
+            raise ValueError(f"unsupported resource uri: {uri}")
+        rel = uri.removeprefix("demo://file/")
+        p = _resolve(rel)
+        if not p.exists():
+            raise ValueError(f"resource not found: {uri}")
+        content = p.read_text(encoding="utf-8")
+        return types.ReadResourceResult(
+            contents=[types.TextResourceContents(
+                uri=uri, mime_type="text/plain", text=content,
+            )]
+        )
+
+    server = Server(
+        "demo-server",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+        on_list_prompts=list_prompts,
+        on_get_prompt=get_prompt,
+        on_list_resources=list_resources,
+        on_read_resource=read_resource,
+    )
 
     async with stdio_server() as (read, write):
         await server.run(read, write, server.create_initialization_options())

@@ -55,6 +55,8 @@ agents:                       # agent 身份 -> 各 server 的策略
     servers:
       fs:
         default: ask          # 没有命中规则的工具 → ask
+        prompts: allow        # V1.1：prompts/resources 能力开关（默认 deny）
+        resources: allow
         tools:
           "list_*": allow
           "read_file": allow
@@ -84,6 +86,25 @@ agentgate run --config policy.yaml --agent claude-code
 
 常用覆盖参数：`--state-dir DIR`、`--on-ask pending|deny`、`--ask-timeout 秒`。
 策略加载失败（YAML 错、字段非法）会以可读错误退出（退出码 2）。
+
+### 4.1.1 HTTP 模式（多客户端共享，V1.1）
+
+```bash
+agentgate run --config policy.yaml --agent claude-code --http 127.0.0.1:8080
+```
+
+- 客户端以 streamable HTTP 连接 `http://127.0.0.1:8080/mcp`；
+- 一个网关进程可同时服务多个客户端连接；agent 身份仍来自 `--agent`；
+- 多 agent 需求：每个 agent 一个进程/端口（身份不走 HTTP 头，避免信任问题）；
+- localhost 绑定自动启用 DNS rebinding 防护。
+
+### 4.1.2 审批签名（V1.1，可选加固）
+
+```bash
+export AGENTGATE_APPROVAL_SECRET="<随机长随机串>"   # 网关与审批终端使用同一环境变量
+```
+
+设置后，`agentgate approve` 的裁决自动附 HMAC 签名，网关验签后才生效；未签名或伪造的裁决文件一律按拒绝处理并审计 `approval_signature_invalid`。密钥只从环境变量读取，不要写进策略文件或脚本。
 
 ### 4.2 Claude Code 接入
 
@@ -134,12 +155,13 @@ agentgate log -n 50         # 最近 50 条
 
 | 局限 | 说明 | 规划 |
 |---|---|---|
-| 仅 stdio 入口 | 单网关进程服务一个客户端 | HTTP 入口 EX-1 |
+| HTTP 入口单 agent | 一个 HTTP 网关进程服务一个 agent 身份（多连接可共享） | 多 agent 路由 |
+| prompts/resources 无 ask | 能力开关只有 allow/deny（只读列举不走人工审批） | 按需扩展 |
+| prompts/resources 仅透传 | prompt 参数不做 args_match 级过滤 | 按需扩展 |
 | HTTP 上游不支持 headers | 配置了会拒绝加载（fail at load） | EX-6 密钥出口 |
-| 审批/委托未签名 | 假设审批终端与网关同机同信任域；同机攻击者可伪造 decisions 文件 | EX-3 签名绑定 |
-| grants.json 单写者 | 运行期由网关独占写；CLI 并发 revoke 有竞态；文件损坏自动清空（更严格方向） | V1.1 |
-| 仅代理 tools | prompts/resources 不透传 | EX-4（V1.1） |
+| grants.json 单写者 | 运行期由网关独占写；CLI 并发 revoke 有竞态；文件损坏自动清空（更严格方向） | V1.2 |
 | 策略不热更新 | 改策略需重启网关 | 路线图外 |
+| 审计文件未轮转 | 长期运行需自行 logrotate | V1.2 |
 
 ## 8. 排障
 

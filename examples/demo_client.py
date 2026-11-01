@@ -99,6 +99,17 @@ async def main() -> int:
             res = await session.call_tool("demo--delete_file", {"path": "sandbox/demo/hello.txt"})
             print(f"    is_error={res.is_error}  {text_of(res)}")
 
+            print("\n--- 5. prompts & resources (V1.1) ---")
+            prompts = await session.list_prompts()
+            print(f"    prompts: {[p.name for p in prompts.prompts]}")
+            got = await session.get_prompt("demo--greet", {"user": "agentgate"})
+            print(f"    prompt result: {got.messages[0].content.text}")
+            resources = await session.list_resources()
+            print(f"    resources: {[str(r.uri) for r in resources.resources]}")
+            if resources.resources:
+                read = await session.read_resource(str(resources.resources[0].uri))
+                print(f"    resource body: {read.contents[0].text[:60]!r}")
+
     print("\n--- audit tail (agentgate log -n 12) ---")
     audit = state_dir / "audit.jsonl"
     if audit.exists():

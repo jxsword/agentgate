@@ -21,6 +21,8 @@ agents:
     servers:
       demo:
         default: ask      # unmapped tools require human approval
+        prompts: allow    # V1.1 (EX-4): prompts/resources default to deny; opt in
+        resources: allow
         tools:
           "echo": allow
           "read_file": allow
