@@ -1,0 +1,34 @@
+# agentgate example policy
+# Scope: one agent ("claude-code") talking to one demo upstream ("demo").
+# Fail-closed: anything not matching a rule below falls through to the
+# server default (ask) and then to global default_decision (deny).
+
+version: 1
+default_decision: deny
+state_dir: .agentgate
+on_ask: pending          # "pending": write approval request & wait; "deny": fail closed (CI)
+ask_timeout_seconds: 300
+
+servers:
+  demo:
+    transport: stdio
+    command: python
+    args: ["examples/demo_server.py"]
+    # env:                # optional extra env vars for the upstream process
+
+agents:
+  claude-code:
+    servers:
+      demo:
+        default: ask      # unmapped tools require human approval
+        tools:
+          "echo": allow
+          "read_file": allow
+          "write_file":
+            decision: ask
+            args_match:
+              path: "*sandbox*"          # only sandbox paths even qualify for asking
+            delegation:
+              ttl_seconds: 600           # approving once grants 10 minutes of identical calls
+              bind: tool+args            # grant is bound to the exact arguments
+          "delete_file": deny            # never, for anyone
