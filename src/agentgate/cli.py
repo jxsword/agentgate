@@ -434,6 +434,91 @@ def cmd_demo(args) -> int:
     return completed.returncode
 
 
+def cmd_doctor(args) -> int:
+    """N (v0.6): environment and configuration diagnostics."""
+    checks: list[tuple[str, bool, str]] = []
+    ok_all = True
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        nonlocal ok_all
+        ok_all = ok_all and ok
+        checks.append((name, ok, detail))
+
+    v = sys.version_info
+    check(f"python >= 3.11 ({v.major}.{v.minor}.{v.micro})",
+          (v.major, v.minor) >= (3, 11))
+    try:
+        import mcp as _mcp
+
+        check(f"mcp SDK installed ({getattr(_mcp, '__version__', '?')})", True)
+    except ImportError as e:
+        check("mcp SDK installed", False, str(e))
+    try:
+        import yaml  # noqa: F401
+
+        check("pyyaml installed", True)
+    except ImportError as e:
+        check("pyyaml installed", False, str(e))
+
+    state = _state_dir(args)
+    state.mkdir(parents=True, exist_ok=True)  # the gateway creates it at runtime too
+    try:
+        probe = state / ".doctor-probe"
+        probe.write_text("x", encoding="utf-8")
+        probe.unlink()
+        check(f"state dir writable ({state})", True)
+    except OSError as e:
+        check(f"state dir writable ({state})", False, str(e))
+
+    audit = state / "audit.jsonl"
+    if audit.exists():
+        ok, bad_line, total, msg = AuditLog.verify_file(audit)
+        check(f"audit chain ({total} records)", ok, msg)
+    else:
+        check("audit chain (no audit yet)", True, "no audit file")
+    for rotated in sorted(state.glob("audit-*.jsonl")):
+        ok, _, total, msg = AuditLog.verify_file(rotated)
+        check(f"audit chain ({rotated.name})", ok, msg)
+
+    if args.config:
+        from .config import ConfigError
+
+        try:
+            config = load_config(args.config)
+            check(f"policy loads ({len(config.servers)} servers, {len(config.agents)} agents)",
+                  True, str(args.config))
+            if args.reach:
+                # best-effort upstream reachability: start & stop each upstream
+                import asyncio
+                from contextlib import AsyncExitStack
+
+                from .upstream import Upstream
+
+                async def probe_upstreams() -> list[tuple[str, bool, str]]:
+                    out = []
+                    async with AsyncExitStack() as stack:
+                        for name, scfg in config.servers.items():
+                            up = Upstream(scfg)
+                            try:
+                                await asyncio.wait_for(up.start(stack), timeout=10)
+                                out.append((f"upstream {name} reachable", True,
+                                            up.server_info.name if up.server_info else ""))
+                            except Exception as e:  # noqa: BLE001
+                                out.append((f"upstream {name} reachable", False, str(e)))
+                    return out
+
+                for name, ok, detail in asyncio.run(probe_upstreams()):
+                    check(name, ok, detail)
+        except ConfigError as e:
+            check("policy loads", False, str(e))
+
+    for name, ok, detail in checks:
+        mark = "✓" if ok else "✗"
+        print(f"{mark} {name}" + (f"  ({detail})" if detail else ""))
+    print("\ndoctor:", "all checks passed" if ok_all else "FAILURES FOUND")
+    return 0 if ok_all else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -529,6 +614,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_demo = sub.add_parser("demo", help="one-command demo (gateway + demo upstream + scripted client)")
     p_demo.set_defaults(func=cmd_demo)
+
+    p_doctor = sub.add_parser("doctor", help="environment and configuration diagnostics")
+    p_doctor.add_argument("--config", help="also validate this policy file")
+    p_doctor.add_argument("--reach", action="store_true",
+                          help="also probe upstream reachability (starts/stops each)")
+    p_doctor.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    p_doctor.set_defaults(func=cmd_doctor)
 
     return parser
 
