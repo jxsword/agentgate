@@ -171,6 +171,72 @@ def cmd_check(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    """F6 (v0.3): aggregate the audit log into a per agent/tool decision report."""
+    import datetime as _dt
+
+    state = _state_dir(args)
+    log_path = state / "audit.jsonl"
+    sources = sorted(state.glob("audit-*.jsonl")) + ([log_path] if log_path.exists() else [])
+    since = None
+    if args.since:
+        try:
+            since = _dt.datetime.fromisoformat(args.since)
+        except ValueError:
+            print(f"agentgate: --since must be ISO 8601, got {args.since!r}", file=sys.stderr)
+            return 2
+
+    rows: dict[tuple[str, str], dict[str, int]] = {}
+    total_decisions = 0
+    for src in sources:
+        for line in src.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("event") not in ("call", "call_denied", "ask_denied", "rate_limited"):
+                continue
+            if since is not None:
+                try:
+                    ts = _dt.datetime.strptime(rec.get("ts", ""), "%Y-%m-%dT%H:%M:%S%z")
+                    if ts < since:
+                        continue
+                except ValueError:
+                    pass
+            key = (str(rec.get("agent")), str(rec.get("tool")))
+            row = rows.setdefault(key, {"allowed": 0, "denied": 0, "ask_allowed": 0})
+            total_decisions += 1
+            if rec.get("event") == "call":
+                if rec.get("decision") in ("allow", "grant"):
+                    row["allowed"] += 1
+                else:  # ask_allowed
+                    row["ask_allowed"] += 1
+            else:  # call_denied / ask_denied / rate_limited
+                row["denied"] += 1
+
+    if args.format == "json":
+        print(json.dumps({
+            "total_decisions": total_decisions,
+            "rows": [
+                {"agent": a, "tool": t, **counts,
+                 "denial_rate": round(counts["denied"] / max(sum(counts.values()), 1), 3)}
+                for (a, t), counts in sorted(rows.items())
+            ],
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    if not rows:
+        print("no tool decisions found in audit")
+        return 0
+    print(f"{'agent':<16} {'tool':<28} {'allow/grant':>11} {'ask->ok':>8} {'denied':>7} {'deny%':>6}")
+    for (agent, tool), c in sorted(rows.items()):
+        n = sum(c.values())
+        print(f"{agent:<16.16} {tool:<28.28} {c['allowed']:>11} {c['ask_allowed']:>8} "
+              f"{c['denied']:>7} {round(100 * c['denied'] / n):>5}%")
+    print(f"\ntotal decisions: {total_decisions} (sources: {len(sources)} file(s))")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -235,6 +301,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--args", dest="arguments", help="JSON object of tool arguments (single-case mode)")
     p_check.add_argument("--cases", help="JSON array of {server, tool, arguments, expect?} for batch mode")
     p_check.set_defaults(func=cmd_check)
+
+    p_report = sub.add_parser("report", help="aggregate audit into a per agent/tool decision report")
+    p_report.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    p_report.add_argument("--since", help="only decisions after this ISO 8601 timestamp")
+    p_report.add_argument("--format", choices=["table", "json"], default="table")
+    p_report.set_defaults(func=cmd_report)
 
     return parser
 
