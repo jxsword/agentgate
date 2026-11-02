@@ -52,6 +52,8 @@ agentgate revoke <grant_id>       # 即时撤销
 - **审计报表**（v0.3）：`agentgate report` 按 agent/tool 汇总，table/json/csv
 - **控制台认证**（v0.3）：`AGENTGATE_UI_TOKEN`；跨进程 grants 文件锁
 - **打包**（v0.3）：非 root Dockerfile + compose 示例 + GitHub Actions 3 平台矩阵 + 策略 JSON Schema
+- **审计防篡改**（v0.4）：哈希链 + `agentgate log --verify`，取证级日志完整性
+- **validate/healthz/status**（v0.4）：策略校验命令、HTTP 运维探针、审批拒绝理由回传、tools/list 缓存、systemd 样例
 
 ## 文档
 

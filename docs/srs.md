@@ -198,6 +198,29 @@ grants.json 写路径加独占文件锁（msvcrt/fcntl，有限重试）：锁�
 #### FR-OPS-001 打包与 CI P2 V0.3
 Dockerfile（非 root slim）+ docker-compose 示例（gateway+console）；GitHub Actions 3 平台 × Python 3.11/3.13 矩阵；策略 JSON Schema（编辑器补全）。
 
+### 3.9 模块：V0.4 增量需求（取证与运维收尾）
+
+#### FR-AU-006 审计哈希链 P1 V0.4
+每条审计记录携带 `prev`（前一条完整行的 sha256，创世为 64 零）；`agentgate log --verify` 校验全部审计文件（含轮转文件，各自独立链）；对记录的就地修改/删除会使链断裂并被定位；无 `prev` 的历史记录跳过（向前兼容）。
+
+#### FR-CLI-008 策略校验命令 P2 V0.4
+`agentgate validate`：仅加载校验并输出摘要（server/agent 数、规则数、限流与能力开关），非法退出码 1。
+
+#### FR-AP-009 审批理由 P1 V0.4
+裁决可带 reason（CLI `--reason`、控制台拒绝表单）：拒绝理由回传 agent（isError 文本）并写入审计；reason 纳入 HMAC 签名载荷，签名后不可篡改。
+
+#### FR-GW-013 pending 残留清理 P2 V0.4
+网关启动时移除 mtime 早于 ask_timeout 的 pending 文件（活等待不可能超过超时）并审计 `pending_cleanup`。
+
+#### FR-OPS-002 健康与状态端点 P2 V0.4
+HTTP 模式暴露 `/healthz`（存活）与 `/status`（agent、上游 serverInfo、on_ask、超时配置）；多 agent 模式为进程级聚合。
+
+#### FR-GW-014 tools/list 缓存 P2 V0.4
+`list_cache_seconds`（默认 30s，0=关闭）：聚合工具清单短 TTL 缓存，热更新换入新配置后自然生效。
+
+#### FR-OPS-003 systemd 部署样例 P3 V0.4
+deploy/ 提供 gateway（多 agent HTTP）与 console 单元样例，含加固指令与环境变量密钥占位。
+
 ### 3.5 模块：CLI（CLI）
 
 #### FR-CLI-001 run P0 V1.0
@@ -301,6 +324,7 @@ v0.1 输出为英文（错误信息面向开发者）；代码与文档 UTF-8，
 | V1.1 | 2026-11-02 | 依据 DR-003 追加 §3.6 增量需求：FR-GW-007（HTTP 入口）、FR-GW-008（prompts/resources 代理）、FR-PL-005（能力开关）、FR-AP-007（审批签名）；§7 扩展清单中 EX-1/3/4 移入本版实现 | 用户授权的扩展决策 |
 | V1.2 | 2026-11-02 | 追加 §3.7 增量需求：FR-GW-009（headers 凭据注入）、FR-GW-010（策略热更新）、FR-GW-011（多 agent 单进程 HTTP）、FR-AU-004（审计轮转）、FR-CLI-005（Web 审批台）、FR-PL-006（OPA 后端适配）；§7 扩展清单中 EX-2/5/6 移入本版实现，路线图全部条目落地 | 用户指示"继续扩展实现所有功能" |
 | V1.3/产品 v0.3 | 2026-11-03 | 追加 §3.8：FR-CLI-006（策略模拟器）、FR-GW-012（调用超时）、FR-PL-007（限流）、FR-CLI-007（控制台认证）、FR-AP-008（委托锁）、FR-AU-005（报表）、FR-OPS-001（打包与 CI） | 用户授权的持续迭代（时间盒至 4:10） |
+| 产品 v0.4 | 2026-11-03 | 追加 §3.9：FR-AU-006（审计哈希链）、FR-CLI-008（validate）、FR-AP-009（审批理由）、FR-GW-013（pending 清理）、FR-OPS-002（健康端点）、FR-GW-014（list 缓存）、FR-OPS-003（systemd 样例） | 用户授权的持续迭代 |
 
 ### 8.4 审核日志（两轮自行复审）
 **第 1 轮（完整性）**——发现并修正：① 补 FR-AU-003（参数留痕边界：审计默认不含完整参数，仅哈希；pending 文件含原文供人类审阅），原稿未定义敏感参数扩散面；② 补 NFR-COMPAT-001 与 NFR-PERF-001/002 量化（原稿性能/兼容为定性）；③ 补 FR-GW-006 上游故障隔离与"全部失败拒绝启动"语义；④ 8.1 矩阵补充 NFR 映射。

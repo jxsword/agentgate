@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 (2026-11-03)
+
+加固与运维（SRS §3.9）：
+
+- **审计哈希链防篡改**：每条记录携带前一条的 sha256；`agentgate log --verify` 校验全部审计文件（编辑/删除即断链）；轮转文件为独立链
+- **`agentgate validate`**：不启动网关即可校验策略并输出摘要
+- **审批拒绝理由**：CLI `--reason` / 控制台拒绝表单；理由随拒绝文本回传 agent，并纳入 HMAC 签名载荷（防签名后篡改）
+- **pending 残留清理**：网关启动时移除超过 ask-timeout 的遗留审批文件（崩溃残留）
+- **/healthz 与 /status 端点**：HTTP 模式运维探针（agent、上游、on_ask、超时配置）
+- **tools/list 缓存**：`list_cache_seconds`（默认 30s）聚合快照，客户端频繁轮询不再打到上游
+- **systemd 部署样例**：gateway（多 agent HTTP）与 console 单元，含加固项与环境变量密钥
+
 ## 0.3.0 (2026-11-03)
 
 运维与治理强化（SRS §3.8）：

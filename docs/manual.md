@@ -193,6 +193,26 @@ agentgate ui --host 0.0.0.0     # 未设 token 时拒绝绑定非回环地址
 
 设置后所有控制台请求（含表单提交）必须携带 token（`Authorization: Bearer` 或 `?token=`，页面表单自动内嵌）。
 
+### 4.1.13 审计防篡改校验（v0.4）
+
+每条审计记录链式携带前一条的哈希。事后校验：
+
+```bash
+agentgate log --verify        # 校验全部审计文件（含轮转文件）
+# agentgate-....jsonl: OK - chain intact (12/12 records chained)
+```
+
+任何就地编辑/删除都会被定位（`TAMPERED`，退出码 1）。取证时先用它证明日志完整，再做 `report` 分析。
+
+### 4.1.14 其他 v0.4 快捷项
+
+- `agentgate validate --config policy.yaml`：只校验不启动，输出策略摘要
+- 拒绝理由：`agentgate approve <id> --deny --reason "..."`（或控制台拒绝表单），理由回传给 agent 并计入签名
+- `/healthz`、`/status`：HTTP 网关模式运维探针
+- `list_cache_seconds: 0`：关闭 tools/list 缓存（默认 30s）
+- `deploy/*.service`：systemd 部署样例（含加固项）
+- 网关启动自动清理超过 ask-timeout 的遗留审批文件
+
 ### 4.1.12 Docker 部署（v0.3）
 
 ```bash
