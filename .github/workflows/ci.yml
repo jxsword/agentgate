@@ -10,7 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # macOS omitted: arm64 runner capacity repeatedly cancels the job, and
+        # macOS burns 10x minutes on private repos; re-add when public or on demand
+        os: [ubuntu-latest, windows-latest]
         python: ["3.13"]   # one version per OS to conserve private-repo CI minutes
     runs-on: ${{ matrix.os }}
     steps:
