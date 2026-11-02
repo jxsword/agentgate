@@ -221,6 +221,15 @@ HTTP 模式暴露 `/healthz`（存活）与 `/status`（agent、上游 serverInf
 #### FR-OPS-003 systemd 部署样例 P3 V0.4
 deploy/ 提供 gateway（多 agent HTTP）与 console 单元样例，含加固指令与环境变量密钥占位。
 
+#### FR-AU-007 审计完整参数开关 P3 V0.4
+`audit_arguments: true` 时审计记录附加完整 arguments（默认关闭仅哈希），适用于全部决策路径（含未知工具与策略错误）。
+
+#### FR-CLI-009 策略差异模拟 P3 V0.4
+`agentgate check --config A --diff B --cases`：标记两组策略决策不一致的用例（`~ diff: A=x vs B=y`），用于策略变更影响分析。
+
+#### FR-OPS-004 PyPI 发布流水线 P3 V0.4
+`.github/workflows/publish.yml`：`v*` tag 触发构建并经 PyPI trusted publishing 发布。
+
 ### 3.5 模块：CLI（CLI）
 
 #### FR-CLI-001 run P0 V1.0

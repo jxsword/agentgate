@@ -8,9 +8,12 @@
 - **`agentgate validate`**：不启动网关即可校验策略并输出摘要
 - **审批拒绝理由**：CLI `--reason` / 控制台拒绝表单；理由随拒绝文本回传 agent，并纳入 HMAC 签名载荷（防签名后篡改）
 - **pending 残留清理**：网关启动时移除超过 ask-timeout 的遗留审批文件（崩溃残留）
-- **/healthz 与 /status 端点**：HTTP 模式运维探针（agent、上游、on_ask、超时配置）
+- **/healthz 与 /status 端点**：HTTP 模式运维探针（agent、上游、on_ask、超时配置、限流窗口占用）
 - **tools/list 缓存**：`list_cache_seconds`（默认 30s）聚合快照，客户端频繁轮询不再打到上游
 - **systemd 部署样例**：gateway（多 agent HTTP）与 console 单元，含加固项与环境变量密钥
+- **审计完整参数开关**：`audit_arguments: true`（默认关，仅哈希），全决策路径含未知工具
+- **`check --diff`**：两份策略对同一组用例的决策差异标记（策略变更影响分析）
+- **PyPI 发布工作流**：tag 触发 trusted publishing
 
 ## 0.3.0 (2026-11-03)
 
