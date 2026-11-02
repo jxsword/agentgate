@@ -277,16 +277,47 @@ def _parse_server_config(name: str, raw: dict) -> ServerConfig:
     )
 
 
-def load_config(path: str | Path) -> Config:
-    p = Path(path)
-    if not p.exists():
-        raise ConfigError(f"config file not found: {p}")
+def _deep_merge(base: dict, over: dict) -> dict:
+    """L2 (v0.6): recursive merge for `extends`; `over` wins on conflicts,
+    dict values merge per key, everything else (lists/scalars) is replaced."""
+    out = dict(base)
+    for key, value in over.items():
+        if key in out and isinstance(out[key], dict) and isinstance(value, dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _load_raw(path: Path, chain: tuple[Path, ...]) -> dict:
+    """Read one policy file, resolving `extends` chains (cycle-safe)."""
+    rp = path.resolve()
+    if rp in chain:
+        chain_str = " -> ".join(str(c) for c in chain + (rp,))
+        raise ConfigError(f"policy extends cycle detected: {chain_str}")
+    if not rp.exists():
+        raise ConfigError(f"config file not found: {path}")
     try:
-        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(rp.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        raise ConfigError(f"invalid YAML in {p}: {e}") from e
+        raise ConfigError(f"invalid YAML in {path}: {e}") from e
     if not isinstance(raw, dict):
         raise ConfigError(f"config root must be a mapping, got {type(raw).__name__}")
+    extends = raw.pop("extends", None)
+    if extends:
+        if not isinstance(extends, str):
+            raise ConfigError(f"extends must be a path string, got {extends!r}")
+        base_raw = _load_raw(rp.parent / extends, chain + (rp,))
+        raw = _deep_merge(base_raw, raw)
+    return raw
+
+
+def load_config(path: str | Path) -> Config:
+    raw = _load_raw(Path(path), ())
+    return _parse_config(raw)
+
+
+def _parse_config(raw: dict) -> Config:
 
     version = raw.get("version", 1)
     if version != 1:

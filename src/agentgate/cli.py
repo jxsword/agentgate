@@ -7,6 +7,7 @@ import json
 import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
@@ -147,6 +148,20 @@ def _follow(path, filters: dict[str, str], grep: str | None) -> None:
 
 def cmd_grants(args) -> int:
     store = GrantStore(_state_dir(args) / "grants.json")
+    if getattr(args, "grant_id", None):
+        # L3 (v0.6): single grant detail
+        matches = [g for g in store.list(include_expired=True) if g.id == args.grant_id]
+        if not matches:
+            print(f"grant {args.grant_id!r} not found", file=sys.stderr)
+            return 1
+        g = matches[0]
+        print(f"id:       {g.id}")
+        print(f"scope:    {g.agent}@{g.server}--{g.tool}" + (" (args-bound)" if g.args_hash else ""))
+        print(f"created:  {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(g.created_at))}")
+        print(f"expires:  {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(g.expires_at))}"
+              f" ({'active' if g.active() else 'expired'})")
+        print(f"approver: {g.approver}")
+        return 0
     grants = store.list(include_expired=args.all)
     if not grants:
         print("no active grants")
@@ -471,7 +486,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_log.set_defaults(func=cmd_log)
 
-    p_grants = sub.add_parser("grants", help="list active delegation grants")
+    p_grants = sub.add_parser("grants", help="list active delegation grants (or show one by id)")
+    p_grants.add_argument("grant_id", nargs="?", default=None, help="show this grant's details")
     p_grants.add_argument("--all", action="store_true", help="include expired")
     p_grants.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_grants.set_defaults(func=cmd_grants)
