@@ -1,0 +1,25 @@
+# agentgate web approval console - systemd service example
+# The console must share the gateway's state directory (same .agentgate volume).
+# Always set AGENTGATE_UI_TOKEN when binding anything but loopback.
+
+[Unit]
+Description=agentgate web approval console
+After=network-online.target agentgate-gateway.service
+
+[Service]
+Type=simple
+User=agentgate
+WorkingDirectory=/opt/agentgate
+Environment=AGENTGATE_UI_TOKEN=__SET_ME__
+ExecStart=/opt/agentgate/.venv/bin/agentgate ui \
+  --state-dir /opt/agentgate/.agentgate \
+  --host 127.0.0.1 --port 8756
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/agentgate/.agentgate
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

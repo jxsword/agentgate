@@ -1,0 +1,30 @@
+# agentgate gateway (multi-agent HTTP) - systemd user/system service example
+# Install: sudo cp deploy/agentgate-gateway.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now agentgate-gateway
+# Adjust User, WorkingDirectory, Environment (secrets!) and paths for your host.
+
+[Unit]
+Description=agentgate MCP authorization gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentgate
+WorkingDirectory=/opt/agentgate
+# Secrets only via environment (never in the policy file):
+Environment=AGENTGATE_APPROVAL_SECRET=__SET_ME__
+ExecStart=/opt/agentgate/.venv/bin/agentgate run \
+  --config /opt/agentgate/policy.yaml \
+  --agent all \
+  --http 127.0.0.1:8080
+Restart=on-failure
+RestartSec=3
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/agentgate/.agentgate
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

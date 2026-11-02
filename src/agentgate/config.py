@@ -177,6 +177,8 @@ class Config:
     # V1.2 (EX-5): optional external policy endpoint consulted for non-explicit
     # local decisions (see policy_backends.OpaPolicyEngine)
     policy_backend_url: str | None = None
+    # v0.4 (G6): tools/list aggregation cache TTL; 0 disables
+    list_cache_seconds: int = 30
 
     def __post_init__(self) -> None:
         if self.default_decision not in DECISIONS:
@@ -276,6 +278,7 @@ def load_config(path: str | Path) -> Config:
         on_ask=str(raw.get("on_ask", "pending")),
         ask_timeout_seconds=int(raw.get("ask_timeout_seconds", 300)),
         policy_backend_url=raw.get("policy_backend_url"),
+        list_cache_seconds=int(raw.get("list_cache_seconds", 30)),
     )
     for name, scfg in (raw.get("servers") or {}).items():
         if not isinstance(scfg, dict):

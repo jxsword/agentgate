@@ -74,6 +74,14 @@ def cmd_approve(args) -> int:
 
 def cmd_log(args) -> int:
     log = AuditLog(_state_dir(args) / "audit.jsonl")
+    if getattr(args, "verify", False):
+        ok_all = True
+        for src in log.rotated_files() + [log.path]:
+            ok, bad_line, total, msg = AuditLog.verify_file(src)
+            print(f"{src.name}: {'OK' if ok else 'TAMPERED'} - {msg}")
+            if not ok:
+                ok_all = False
+        return 0 if ok_all else 1
     records = log.tail(args.n)
     for r in records:
         print(json.dumps(r, ensure_ascii=False))
@@ -314,6 +322,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_log = sub.add_parser("log", help="show recent audit records")
     p_log.add_argument("-n", type=int, default=20)
+    p_log.add_argument("--verify", action="store_true",
+                       help="verify the tamper-evident hash chain of all audit files")
     p_log.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_log.set_defaults(func=cmd_log)
 

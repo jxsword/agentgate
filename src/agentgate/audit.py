@@ -1,15 +1,16 @@
-"""Append-only JSONL audit log.
+"""Append-only JSONL audit log with tamper-evident hash chaining (G5).
 
-One JSON object per line. Records are appended with fsync so that an
-`agentgate incident` review can replay exactly what happened and why.
+One JSON object per line, fsynced. Each record carries `prev` = sha256 of the
+previous record's exact line (genesis: 64 zeros), so any in-place edit or
+deletion breaks the chain - verifiable offline with `agentgate log --verify`.
 
-Size-based rotation (V1.2): when the file exceeds max_bytes it is renamed to
-`audit-<timestamp>.jsonl` and a fresh file starts - audit history is kept,
-never truncated.
+Rotation (V1.2): at max_bytes the file is renamed to `audit-<ts>.jsonl`; each
+file is an independent chain (genesis restarts), histories are never truncated.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -17,6 +18,11 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+GENESIS = "0" * 64
+
+
+def _line_hash(line: str) -> str:
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()
 
 
 class AuditLog:
@@ -24,6 +30,7 @@ class AuditLog:
         self.path = Path(path)
         self.max_bytes = max_bytes
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_hash = GENESIS
 
     def _rotate_if_needed(self) -> None:
         try:
@@ -34,12 +41,17 @@ class AuditLog:
             return
         stamp = time.strftime("%Y%m%d%H%M%S")
         self.path.rename(self.path.with_name(f"{self.path.stem}-{stamp}{self.path.suffix}"))
+        # each file is an independent chain
+        self._last_hash = GENESIS
 
     def append(self, event: str, **fields: Any) -> dict[str, Any]:
         self._rotate_if_needed()
-        record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "event": event, **fields}
+        record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "event": event,
+                  "prev": self._last_hash, **fields}
+        line = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        self._last_hash = _line_hash(line)
         with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+            f.write(line + "\n")
             f.flush()
             os.fsync(f.fileno())
         return record
@@ -58,3 +70,32 @@ class AuditLog:
 
     def rotated_files(self) -> list[Path]:
         return sorted(self.path.parent.glob(f"{self.path.stem}-*{self.path.suffix}"))
+
+    @staticmethod
+    def verify_file(path: str | Path) -> tuple[bool, int, int, str]:
+        """Verify one audit file's hash chain.
+
+        Returns (ok, first_bad_line_no, total, message). Legacy records without
+        a `prev` field are skipped (v0.2 files predate the chain).
+        """
+        path = Path(path)
+        if not path.exists():
+            return True, 0, 0, "missing file (nothing to verify)"
+        expected_prev = GENESIS
+        total = checked = 0
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            total += 1
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                return False, i, total, f"line {i}: not valid JSON"
+            if "prev" not in rec:
+                continue  # legacy record
+            checked += 1
+            if rec["prev"] != expected_prev:
+                return False, i, total, f"line {i}: chain broken (expected prev {expected_prev[:12]}...)"
+            canonical = json.dumps(rec, ensure_ascii=False, sort_keys=True)
+            expected_prev = _line_hash(canonical)
+        return True, 0, total, f"chain intact ({checked}/{total} records chained)"

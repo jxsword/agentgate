@@ -65,6 +65,7 @@ class Gateway:
         self.upstreams: dict[str, Upstream] = {}
         self.rate_limiter = RateLimiter()
         self.rate_limiter.bind(lambda a, s: self.config.agents.get(a, AgentPolicy()).servers.get(s))
+        self._tools_cache: tuple[float, types.ListToolsResult] | None = None
 
     def _reload_policy_once(self, path, last_mtime) -> float | None:
         """One hot-reload step; returns the mtime to remember (None on stat error)."""
@@ -125,6 +126,15 @@ class Gateway:
     # ---- MCP handlers ----
 
     async def _list_tools(self, ctx, params) -> types.ListToolsResult:
+        # G6: short-TTL cache - clients poll tools/list aggressively; the merged
+        # snapshot is reused for list_cache_seconds (0 = off)
+        ttl = self.config.list_cache_seconds
+        if ttl:
+            import time as _time
+
+            now = _time.monotonic()
+            if self._tools_cache and now - self._tools_cache[0] < ttl:
+                return self._tools_cache[1]
         merged: list[types.Tool] = []
         for name, upstream in self.upstreams.items():
             try:
@@ -139,7 +149,12 @@ class Gateway:
                     )
             except Exception as e:  # noqa: BLE001
                 print(f"[agentgate] list_tools failed for '{name}': {e}", file=sys.stderr)
-        return types.ListToolsResult(tools=merged)
+        result = types.ListToolsResult(tools=merged)
+        if ttl:
+            import time as _time
+
+            self._tools_cache = (_time.monotonic(), result)
+        return result
 
     async def _call_tool(self, ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
         name = params.name
