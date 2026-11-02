@@ -144,27 +144,37 @@ async def test_http_gateway(workdir):
     )
     try:
         url = f"http://127.0.0.1:{port}/mcp"
-        session = None
+
+        async def connect():
+            """Open http+session contexts with same-task symmetric cleanup on failure."""
+            http_cm = streamable_http_client(url)
+            read, write = await http_cm.__aenter__()
+            try:
+                sess_cm = ClientSession(read, write)
+                await sess_cm.__aenter__()
+            except BaseException:
+                await http_cm.__aexit__(*sys.exc_info())
+                raise
+            try:
+                await sess_cm.initialize()
+            except BaseException:
+                await sess_cm.__aexit__(*sys.exc_info())
+                await http_cm.__aexit__(*sys.exc_info())
+                raise
+            return http_cm, sess_cm
+
         deadline = time.monotonic() + 20
         last_err = None
-        while time.monotonic() < deadline and session is None:
+        http_cm = sess_cm = None
+        while time.monotonic() < deadline and http_cm is None:
             try:
-                http_cm = streamable_http_client(url)
-                read, write = await asyncio.wait_for(http_cm.__aenter__(), timeout=3)
-                sess_cm = ClientSession(read, write)
-                session = await sess_cm.__aenter__()
-                await asyncio.wait_for(session.initialize(), timeout=5)
+                http_cm, sess_cm = await connect()
             except Exception as e:  # noqa: BLE001 - retry until uvicorn is up
                 last_err = e
-                try:
-                    if session:
-                        await sess_cm.__aexit__(None, None, None)
-                except Exception:  # noqa: BLE001
-                    pass
-                session = None
                 await asyncio.sleep(0.4)
-        assert session is not None, f"could not connect to http gateway: {last_err}"
+        assert http_cm is not None, f"could not connect to http gateway: {last_err}"
         try:
+            session = sess_cm
             tools = await session.list_tools()
             assert "demo--echo" in [t.name for t in tools.tools]
             res = await session.call_tool("demo--echo", {"text": "over-http"})
