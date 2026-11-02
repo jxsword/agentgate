@@ -133,6 +133,13 @@ def cmd_check(args) -> int:
         print(f"agentgate: {e}", file=sys.stderr)
         return 2
     engine = PolicyEngine(config)
+    diff_engine = None
+    if args.diff:
+        try:
+            diff_engine = PolicyEngine(load_config(args.diff))
+        except ConfigError as e:
+            print(f"agentgate: --diff config invalid: {e}", file=sys.stderr)
+            return 2
 
     cases = []
     if args.cases:
@@ -165,13 +172,20 @@ def cmd_check(args) -> int:
         if inspect.isawaitable(decision):  # OPA-backed engine
             decision = asyncio.run(decision)
         label = decision.action
-        expect = case.get("expect")
         marker = ""
+        if diff_engine is not None:
+            other = diff_engine.evaluate(args.agent, server, tool, arguments)
+            if inspect.isawaitable(other):
+                other = asyncio.run(other)
+            if other.action != decision.action:
+                marker = f"  ~ diff: {args.config}={decision.action} vs {args.diff}={other.action}"
+        expect = case.get("expect")
+        note = ""
         if expect is not None:
             ok = expect == decision.action
-            marker = "  ✓" if ok else f"  ✗ (expected {expect})"
+            note = "  ✓" if ok else f"  ✗ (expected {expect})"
             failures += 0 if ok else 1
-        print(f"{args.agent}@{server}--{tool}: {label:<6} rule={decision.rule}{marker}")
+        print(f"{args.agent}@{server}--{tool}: {label:<6} rule={decision.rule}{marker}{note}")
         if arguments is not None:
             print(f"    args: {_json.dumps(arguments, ensure_ascii=False)}")
     if failures:
@@ -350,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--tool", help="tool name, namespaced '<server>--<tool>' NOT needed here (single-case mode)")
     p_check.add_argument("--args", dest="arguments", help="JSON object of tool arguments (single-case mode)")
     p_check.add_argument("--cases", help="JSON array of {server, tool, arguments, expect?} for batch mode")
+    p_check.add_argument("--diff", help="second policy file: mark cases whose decision differs")
     p_check.set_defaults(func=cmd_check)
 
     p_validate = sub.add_parser("validate", help="validate a policy file without starting the gateway")

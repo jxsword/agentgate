@@ -54,3 +54,15 @@ class RateLimiter:
         window.append(now)
         self._windows[key] = (window, config)
         return RateLimitResult(limited=False, retry_after=0, limit=config.calls)
+
+    def current(self, agent: str, server: str, now: float | None = None) -> int:
+        """H2: calls currently inside the window (for /status introspection)."""
+        rl = self._config_for(agent, server)
+        if rl is None:
+            return 0
+        now = now if now is not None else time.monotonic()
+        window, config = self._windows.get((agent, server), (deque(), rl))
+        horizon = now - config.window_seconds
+        while window and window[0] <= horizon:
+            window.popleft()
+        return len(window)

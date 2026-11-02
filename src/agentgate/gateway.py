@@ -161,8 +161,7 @@ class Gateway:
         arguments = dict(params.arguments or {})
         parsed = split_tool_name(name)
         if parsed is None or not parsed[1] or parsed[0] not in self.upstreams:
-            self.audit.append(
-                "call_denied",
+            unknown: dict[str, Any] = dict(
                 agent=self.agent,
                 server=parsed[0] if parsed else "(none)",
                 tool=parsed[1] if parsed else name,
@@ -170,6 +169,9 @@ class Gateway:
                 rule="unknown_tool",
                 decision="deny",
             )
+            if self.config.audit_arguments:
+                unknown["arguments"] = arguments
+            self.audit.append("call_denied", **unknown)
             return error_result(
                 f"agentgate: unknown tool {name!r}. Tools are namespaced '<server>--<tool>'; "
                 f"call tools/list to discover what this gateway exposes."
@@ -198,6 +200,8 @@ class Gateway:
             arguments_hash=canonical_args(arguments),
             rule=decision.rule,
         )
+        if self.config.audit_arguments:  # H1: opt-in debug aid (default: hash only)
+            base["arguments"] = arguments
 
         # F3: rate limit gates calls the policy would let through (allow/grant/ask);
         # explicit denies are unaffected. Fail-closed on exceed.
@@ -501,7 +505,7 @@ class Gateway:
     # ---- ops endpoints (G4) ----
 
     def _status_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "agent": self.agent,
             "upstreams": {
                 name: (u.server_info.name if u.server_info else "?")
@@ -511,6 +515,14 @@ class Gateway:
             "ask_timeout_seconds": self.config.ask_timeout_seconds,
             "policy_backend": getattr(self.config, "policy_backend_url", None),
         }
+        # H2: rate-limit window occupancy for this agent
+        limits = {}
+        for server in self.upstreams:
+            n = self.rate_limiter.current(self.agent, server)
+            if n:
+                limits[server] = n
+        payload["rate_windows"] = limits
+        return payload
 
     async def _healthz(self, request):
         from starlette.responses import JSONResponse

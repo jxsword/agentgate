@@ -179,6 +179,9 @@ class Config:
     policy_backend_url: str | None = None
     # v0.4 (G6): tools/list aggregation cache TTL; 0 disables
     list_cache_seconds: int = 30
+    # v0.4 (H1): debug aid - write full tool arguments into audit records
+    # (default off: audit keeps only the canonical-arguments hash)
+    audit_arguments: bool = False
 
     def __post_init__(self) -> None:
         if self.default_decision not in DECISIONS:
@@ -279,6 +282,7 @@ def load_config(path: str | Path) -> Config:
         ask_timeout_seconds=int(raw.get("ask_timeout_seconds", 300)),
         policy_backend_url=raw.get("policy_backend_url"),
         list_cache_seconds=int(raw.get("list_cache_seconds", 30)),
+        audit_arguments=bool(raw.get("audit_arguments", False)),
     )
     for name, scfg in (raw.get("servers") or {}).items():
         if not isinstance(scfg, dict):
