@@ -84,19 +84,59 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
         return GrantStore(state / "grants.json")
 
     class TokenAuthMiddleware(BaseHTTPMiddleware):
-        """F4: when a token is configured, every request must present it via
-        Authorization: Bearer <token> or ?token=<token> (forms embed it in the
-        action URL). Unauthenticated requests get 401."""
+        """F4/J1: when a token is configured, every request must present it via
+        Authorization: Bearer <token>, ?token=<token>, or (J1) an agentgate_ui
+        session cookie obtained from POST /login. Unauthenticated requests to
+        anything except /login get 401."""
+
+        OPEN_PATHS = {"/login"}
 
         async def dispatch(self, request, call_next):
             if token is not None:
+                path = request.url.path
+                if path in self.OPEN_PATHS:
+                    return await call_next(request)
                 supplied = request.query_params.get("token")
                 auth = request.headers.get("authorization", "")
                 if auth.startswith("Bearer "):
                     supplied = auth.removeprefix("Bearer ").strip()
+                if not supplied:
+                    supplied = request.cookies.get("agentgate_ui", "")
                 if supplied != token:
+                    if path == "/" and request.method == "GET":
+                        return RedirectResponse("/login", status_code=303)
                     return PlainTextResponse("agentgate console: unauthorized", status_code=401)
             return await call_next(request)
+
+    async def login_page(request: Request) -> HTMLResponse:
+        return HTMLResponse(
+            "<!doctype html><html><head><meta charset='utf-8'><title>agentgate login</title></head>"
+            "<body style='font-family:sans-serif;margin:4rem'>"
+            "<h1>agentgate console</h1>"
+            "<form method='post' action='/login'>"
+            "<input type='password' name='token' placeholder='console token' autofocus> "
+            "<button>sign in</button></form></body></html>"
+        )
+
+    async def login_submit(request: Request) -> RedirectResponse:
+        if token is None:
+            return RedirectResponse("/", status_code=303)
+        form = await request.form()
+        supplied = str(form.get("token") or "")
+        resp = RedirectResponse("/", status_code=303)
+        if supplied == token:
+            # J1: the token itself is the credential; HttpOnly + SameSite keep it
+            # out of scripts and cross-site posts. 8h session lifetime.
+            resp.set_cookie("agentgate_ui", token, httponly=True, samesite="strict",
+                            max_age=8 * 3600, path="/")
+        else:
+            resp = RedirectResponse("/login", status_code=303)
+        return resp
+
+    async def logout(request: Request) -> RedirectResponse:
+        resp = RedirectResponse("/login", status_code=303)
+        resp.delete_cookie("agentgate_ui", path="/")
+        return resp
 
     def _action(path: str) -> str:
         return f"{path}?token={_esc(token)}" if token else path
@@ -181,6 +221,9 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
     return Starlette(
         routes=[
             Route("/", index),
+            Route("/login", login_page, methods=["GET"]),
+            Route("/login", login_submit, methods=["POST"]),
+            Route("/logout", logout, methods=["GET", "POST"]),
             Route("/approve/{request_id}", approve, methods=["POST"]),
             Route("/revoke/{grant_id}", revoke, methods=["POST"]),
         ],

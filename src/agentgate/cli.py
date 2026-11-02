@@ -103,7 +103,43 @@ def cmd_log(args) -> int:
         matches += 1
         if matches >= args.n:
             break
+    if args.follow:
+        _follow(log.path, filters, args.grep)
     return 0
+
+
+def _follow(path, filters: dict[str, str], grep: str | None) -> None:
+    """J2 (v0.5): tail -f for the audit log (Ctrl+C to stop)."""
+    import time as _time
+
+    offset = path.stat().st_size if path.exists() else 0
+    print(f"[agentgate] following {path} (Ctrl+C to stop)", file=sys.stderr)
+    try:
+        while True:
+            if path.exists():
+                size = path.stat().st_size
+                if size < offset:  # rotated: restart from genesis of new file
+                    offset = 0
+                if size > offset:
+                    with open(path, "r", encoding="utf-8") as f:
+                        f.seek(offset)
+                        for line in f:
+                            line = line.rstrip("\n")
+                            if not line:
+                                continue
+                            try:
+                                rec = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            if grep and grep.lower() not in line.lower():
+                                continue
+                            if any(str(rec.get(k)) != v for k, v in filters.items()):
+                                continue
+                            print(json.dumps(rec, ensure_ascii=False))
+                    offset = size
+            _time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\n[agentgate] follow stopped", file=sys.stderr)
 
 
 def cmd_grants(args) -> int:
@@ -380,6 +416,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--filter", action="append", metavar="KEY=VALUE",
                        help="only records where rec[key] == value (repeatable)")
     p_log.add_argument("--grep", help="substring match on the serialized record")
+    p_log.add_argument("-f", "--follow", action="store_true",
+                       help="keep the log open and print new records (Ctrl+C to stop)")
     p_log.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_log.set_defaults(func=cmd_log)
 

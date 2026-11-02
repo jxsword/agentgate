@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 (2026-11-03)
+
+- **控制台会话认证**：`/login` 表单换签 HttpOnly + SameSite=strict 会话 cookie（8h），浏览器免每次 URL token；`/logout` 注销；未认证访问 `/` 重定向登录页（API 路径仍 401）
+- **`agentgate log -f`**：审计跟随模式（支持 --filter/--grep），轮转自动重置读取位置
+- **威胁模型文档** `docs/security.md`：OWASP Agentic Top 10 / T01-T17 / MAESTRO / TC260 3.0 威胁→缓解映射、fail-closed 清单、"明确不防"边界
+
 ## 0.5.0 (2026-11-03)
 
 多租户与审计体验（SRS §3.10）：

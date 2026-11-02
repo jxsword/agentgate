@@ -247,6 +247,13 @@ server 策略 `redact: [键名 glob]`：审批展示（pending 文件、stderr �
 #### FR-OPS-005 基准脚本 P3 V0.5
 `scripts/bench.py`：tools/call 全链路延迟百分位（min/p50/p95/p99/max）。
 
+#### FR-CLI-011 控制台会话认证 P1 V0.5.1
+`AGENTGATE_UI_TOKEN` 配置下新增 `/login` 表单（GET 表单页/POST 校验）：正确 token 签发 HttpOnly + SameSite=strict 会话 cookie（8h）；中间件接受 cookie/Bearer/query 任一凭证；未认证浏览器访问 `/` 重定向登录页，API 路径 401；`/logout` 注销。token 本身即凭证（本地工具威胁模型，见 docs/security.md）。
+
+#### FR-AU-009 审计跟随 P3 V0.5.1
+`agentgate log -f`：轮询打印新审计记录（与 --filter/--grep 叠加）；审计轮转后自动从新文件起点继续。
+
+
 
 ### 3.5 模块：CLI（CLI）
 

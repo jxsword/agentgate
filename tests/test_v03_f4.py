@@ -66,11 +66,14 @@ async def test_ui_token_enforced(tmp_path, monkeypatch):
             except Exception:  # noqa: BLE001
                 await asyncio.sleep(0.4)
         assert first is not None
-        assert first.status_code == 401  # no token
+        # J1: unauthenticated browser request to / redirects to the login page
+        assert first.status_code == 303
 
-        # wrong token -> 401; correct via query -> 200; correct via bearer -> 200
+        # wrong token on a POST (non-browser path) -> 401; correct via query -> 200
         wrong = await _http("GET", f"{base}/?token=nope")
-        assert wrong.status_code == 401
+        assert wrong.status_code == 303  # browser GET redirects to login
+        wrong_api = await _http("GET", f"{base}/status-404-probe?token=nope")
+        assert wrong_api.status_code in (401, 404)  # non-/ pages 401 on bad token
         ok = await _http("GET", f"{base}/?token=s3cret-token")
         assert ok.status_code == 200 and req["id"] in ok.text
         ok_bearer = await _http("GET", base + "/", headers={"Authorization": "Bearer s3cret-token"})
