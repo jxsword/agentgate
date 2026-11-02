@@ -1,4 +1,4 @@
-"""Web approval console (V1.2, EX-2).
+"""Web approval console (V1.2, EX-2; token auth v0.3 F4).
 
 `agentgate ui --port 8756` serves a small server-rendered console over the
 SAME file protocol the gateway uses:
@@ -6,6 +6,10 @@ SAME file protocol the gateway uses:
   GET  /                     pending approvals + active grants + audit tail
   POST /approve/<id>         action=allow|deny, approver=<name>  (one vote, HMAC-signed if secret set)
   POST /revoke/<grant_id>    revoke a delegation grant
+
+Auth (F4): set AGENTGATE_UI_TOKEN to require that token on every request
+(Authorization: Bearer header or ?token= query parameter). Without a token
+the console refuses non-loopback bindings.
 
 Trust model: bind 127.0.0.1 by default - anyone who can reach the console can
 approve; put it behind your own auth if you expose it. No client-side JS.
@@ -15,17 +19,25 @@ from __future__ import annotations
 
 import argparse
 import html
+import os
 import sys
 from pathlib import Path
 
 from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from starlette.routing import Route
 
 from .approvals import ApprovalManager
 from .audit import AuditLog
 from .grants import GrantStore
+
+UI_TOKEN_ENV = "AGENTGATE_UI_TOKEN"
+
+
+def ui_token() -> str | None:
+    return os.environ.get(UI_TOKEN_ENV, "") or None
 
 _PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -44,6 +56,7 @@ _PAGE = """<!doctype html>
  form {{ display: inline; margin-right: .4rem; }}
 </style></head><body>
 <h1>agentgate console <span class="muted">(state: {state_dir})</span></h1>
+<p class="muted">auth: {auth_status}</p>
 
 <h2>Pending approvals ({n_pending})</h2>
 {pending_table}
@@ -60,7 +73,7 @@ def _esc(v: object) -> str:
     return html.escape(str(v))
 
 
-def build_app(state_dir: str | Path) -> Starlette:
+def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
     state = Path(state_dir)
     mgr = ApprovalManager(state)
     audit = AuditLog(state / "audit.jsonl")
@@ -69,6 +82,24 @@ def build_app(state_dir: str | Path) -> Starlette:
         # re-read from disk per request so grants created after console startup
         # (by the gateway or CLI) are visible immediately
         return GrantStore(state / "grants.json")
+
+    class TokenAuthMiddleware(BaseHTTPMiddleware):
+        """F4: when a token is configured, every request must present it via
+        Authorization: Bearer <token> or ?token=<token> (forms embed it in the
+        action URL). Unauthenticated requests get 401."""
+
+        async def dispatch(self, request, call_next):
+            if token is not None:
+                supplied = request.query_params.get("token")
+                auth = request.headers.get("authorization", "")
+                if auth.startswith("Bearer "):
+                    supplied = auth.removeprefix("Bearer ").strip()
+                if supplied != token:
+                    return PlainTextResponse("agentgate console: unauthorized", status_code=401)
+            return await call_next(request)
+
+    def _action(path: str) -> str:
+        return f"{path}?token={_esc(token)}" if token else path
 
     async def index(request: Request) -> HTMLResponse:
         pending = mgr.list_pending()
@@ -92,11 +123,11 @@ def build_app(state_dir: str | Path) -> Starlette:
                     f"<td>{_esc(r.get('rule'))}</td>"
                     f"<td>{_esc(delegation) if delegation else '<span class=muted>none</span>'}</td>"
                     f"<td>"
-                    f"<form method='post' action='/approve/{_esc(r.get('id'))}'>"
+                    f"<form method='post' action='{_action('/approve/' + str(r.get('id')))}'>"
                     f"<input type='hidden' name='action' value='allow'>"
                     f"approver <input name='approver' value='human' size='8'>"
                     f"<button class='allow'>allow</button></form>"
-                    f"<form method='post' action='/approve/{_esc(r.get('id'))}'>"
+                    f"<form method='post' action='{_action('/approve/' + str(r.get('id')))}'>"
                     f"<input type='hidden' name='action' value='deny'>"
                     f"<button class='deny'>deny</button></form>"
                     f"</td></tr>"
@@ -111,7 +142,7 @@ def build_app(state_dir: str | Path) -> Starlette:
                 f"<tr><td><code>{_esc(g.id)}</code></td><td>{_esc(g.agent)}@{_esc(g.server)}--{_esc(g.tool)}"
                 f"{' (args-bound)' if g.args_hash else ''}</td>"
                 f"<td>{_esc(_remaining(g))}</td><td>{_esc(g.approver)}</td>"
-                f"<td><form method='post' action='/revoke/{_esc(g.id)}'>"
+                f"<td><form method='post' action='{_action('/revoke/' + str(g.id))}'>"
                 f"<button class='deny'>revoke</button></form></td></tr>"
                 for g in active
             )
@@ -121,7 +152,9 @@ def build_app(state_dir: str | Path) -> Starlette:
             grants_table = "<p class='muted'>no active grants</p>"
 
         return HTMLResponse(_PAGE.format(
-            state_dir=_esc(state), n_pending=len(pending), pending_table=pending_table,
+            state_dir=_esc(state),
+            auth_status="token required (AGENTGATE_UI_TOKEN)" if token else "open (loopback only)",
+            n_pending=len(pending), pending_table=pending_table,
             n_grants=len(active), grants_table=grants_table, audit=audit_rows,
         ))
 
@@ -141,11 +174,16 @@ def build_app(state_dir: str | Path) -> Starlette:
         fresh_grants().revoke(grant_id)
         return RedirectResponse("/", status_code=303)
 
-    return Starlette(routes=[
-        Route("/", index),
-        Route("/approve/{request_id}", approve, methods=["POST"]),
-        Route("/revoke/{grant_id}", revoke, methods=["POST"]),
-    ])
+    from starlette.middleware import Middleware
+
+    return Starlette(
+        routes=[
+            Route("/", index),
+            Route("/approve/{request_id}", approve, methods=["POST"]),
+            Route("/revoke/{grant_id}", revoke, methods=["POST"]),
+        ],
+        middleware=[Middleware(TokenAuthMiddleware)],
+    )
 
 
 def json_pretty(value: object) -> str:
@@ -168,11 +206,20 @@ def _remaining(grant) -> str:
     return f"in {secs // 60}m{secs % 60:02d}s"
 
 
-def run_ui(state_dir: str | Path, host: str, port: int) -> None:
+def run_ui(state_dir: str | Path, host: str, port: int, token: str | None = None) -> None:
     import uvicorn
 
-    print(f"[agentgate] console on http://{host}:{port}/ (state: {state_dir})", file=sys.stderr)
-    uvicorn.run(build_app(state_dir), host=host, port=port, log_level="warning")
+    token = token if token is not None else ui_token()
+    if token is None and host not in ("127.0.0.1", "localhost", "::1"):
+        # fail-closed: an unauthenticated console must not leave the machine
+        raise SystemExit(
+            f"agentgate ui: refusing to bind non-loopback host {host!r} without "
+            f"{UI_TOKEN_ENV}; set the env var or bind 127.0.0.1"
+        )
+    status = "token auth enabled" if token else "NO auth (loopback only)"
+    print(f"[agentgate] console on http://{host}:{port}/ ({status}; state: {state_dir})",
+          file=sys.stderr)
+    uvicorn.run(build_app(state_dir, token), host=host, port=port, log_level="warning")
 
 
 def main_ui(argv: list[str] | None = None) -> int:
