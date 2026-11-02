@@ -140,6 +140,68 @@ servers:
 
 `${VAR}` 在加载期解析，变量缺失直接拒绝启动（凭据永不写入策略文件）。env 值同样支持 `${VAR}`。
 
+### 4.1.7 调用超时（v0.3）
+
+```yaml
+servers:
+  demo:
+    call_timeout_seconds: 60    # 默认 120s；0 = 不限时
+```
+
+上游超时转为可读 isError 并审计 `upstream_timeout`；挂死的上游不会阻塞网关其他调用。
+
+### 4.1.8 调用限流（v0.3）
+
+```yaml
+agents:
+  claude-code:
+    servers:
+      demo:
+        rate_limit: { calls: 30, window_seconds: 60 }   # 滑动窗口
+```
+
+仅门控会被放行的调用（allow/grant/ask）；显式 deny 不受影响。ask 尝试计入窗口（审批后被拒也算一次尝试）。超限返回可读错误（含 retry-after）并审计 `rate_limited`。窗口在内存中，重启即清零。
+
+### 4.1.9 策略模拟器（v0.3）
+
+```bash
+# 单例：打印决策与命中规则，不启动上游
+agentgate check --config policy.yaml --agent claude-code \
+  --server demo --tool write_file --args '{"path": "sandbox/a.txt"}'
+
+# 批量（供 CI）：expect 不匹配时退出码 1
+agentgate check --config policy.yaml --agent claude-code --cases cases.json
+```
+
+cases.json 格式：`[{"server": "...", "tool": "...", "arguments": {...}, "expect": "allow"}]`。
+注意：模拟器只评估本地规则，不查询 `policy_backend_url` 外部后端（保证确定性）。
+
+### 4.1.10 审计报表（v0.3）
+
+```bash
+agentgate report                                  # 表格：按 agent×tool 汇总
+agentgate report --format csv > report.csv        # CSV 导出
+agentgate report --format json --since 2026-11-03T00:00:00+08:00
+```
+
+### 4.1.11 控制台认证（v0.3）
+
+```bash
+export AGENTGATE_UI_TOKEN="<随机长随机串>"
+agentgate ui --host 0.0.0.0     # 未设 token 时拒绝绑定非回环地址
+```
+
+设置后所有控制台请求（含表单提交）必须携带 token（`Authorization: Bearer` 或 `?token=`，页面表单自动内嵌）。
+
+### 4.1.12 Docker 部署（v0.3）
+
+```bash
+docker build -t agentgate .
+AGENTGATE_UI_TOKEN=xxx docker compose up -d      # gateway(:8080) + console(:8756)
+```
+
+镜像以非 root 运行；策略只读挂载、state 走卷。编辑器补全：策略文件头部加 `# yaml-language-server: $schema=./policy.schema.json`。
+
 ### 4.2 Claude Code 接入
 
 ```bash

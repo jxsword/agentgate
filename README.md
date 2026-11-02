@@ -46,6 +46,12 @@ agentgate revoke <grant_id>       # 即时撤销
 - **热更新**（V1.2）：策略文件改动 2 秒内生效，非法策略自动回退
 - **外部策略后端**（V1.2）：`policy_backend_url` 对接 OPA 风格决策端点，故障 fail-closed
 - **凭据注入**（V1.2）：上游 headers/env 支持 `${ENV_VAR}` 引用，缺变量拒绝启动
+- **调用超时**（v0.3）：`call_timeout_seconds` 挂死上游不拖垮网关
+- **限流**（v0.3）：server 级滑动窗口 `rate_limit`，超限 fail-closed
+- **策略模拟器**（v0.3）：`agentgate check` 不启动上游即可验证策略（可进 CI）
+- **审计报表**（v0.3）：`agentgate report` 按 agent/tool 汇总，table/json/csv
+- **控制台认证**（v0.3）：`AGENTGATE_UI_TOKEN`；跨进程 grants 文件锁
+- **打包**（v0.3）：非 root Dockerfile + compose 示例 + GitHub Actions 3 平台矩阵 + 策略 JSON Schema
 
 ## 文档
 

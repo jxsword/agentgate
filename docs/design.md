@@ -238,7 +238,19 @@ agentgate revoke   <grant_id> [--state-dir D]
 | 多 agent HTTP | `--agent all`：每 agent 一个 Gateway（独立策略实例）挂载 `/<agent>/mcp`；上游连接共享（MCP 会话并发安全）；lifespan 逐个进入各 session manager；热更新单 watcher 换入全部 gateway |
 | OPA 适配（EX-5） | `policy_backend_url` → OpaPolicyEngine：本地显式决策优先，默认值回落时 POST `{input}` 查询；`{"result":{...}}` 双形兼容；任何后端故障 fail-closed（`opa:error`/`opa:invalid`）；evaluate 为协程，Gateway 以 isawaitable 兼容两种引擎 |
 
-## 11. 部署形态
+## 11. V0.3 增量设计（运维与治理强化）
+
+| 特性 | 设计要点 |
+|---|---|
+| 策略模拟器 `check` | 纯本地 PolicyEngine（不查 OPA——模拟器确定性优先）；批量用例 `expect` 断言退出码 1，可直接进 CI |
+| 调用超时 | SDK 的 read_timeout_seconds 传递；超时可能以 TimeoutError/McpError 文本/ExceptionGroup 多种形态到达，网关按类型+消息双判定转 `upstream_timeout` |
+| 限流 | 内存滑动窗口（deque），键 (agent, server)；配置经 bind(lambda) 动态读 config——热更新后新限流立即生效；ask 尝试计入窗口（审批被拒也算一次尝试） |
+| 控制台认证 | Starlette BaseHTTPMiddleware 全局 401；表单 action 内嵌 `?token=`；无 token 拒绝非回环绑定（fail-closed）。token 出现在 URL 中属可接受折衷（本地工具，无下游日志面） |
+| grants 锁 | `exclusive_lock()`：msvcrt.locking(Windows)/flock(POSIX)+有限重试；写路径=锁→重读→改→原子写；读路径靠原子替换保持一致（match/list 每次重读） |
+| 报表 | 纯读审计（含轮转文件）；`--since` 解析 ISO 后按行 ts 过滤；csv 直接写 stdout 便于重定向 |
+| 打包/CI | Docker 非 root + compose（console 用 AGENTGATE_UI_TOKEN 必填护栏）；CI 矩阵 ubuntu/windows/macos × py3.11/3.13，覆盖率门槛 70%（gateway/upstream 以 e2e 子进程覆盖，进程内数字偏低故门槛温和） |
+
+## 12. 部署形态
 
 ```mermaid
 graph LR

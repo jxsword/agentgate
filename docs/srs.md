@@ -175,6 +175,29 @@ HTTP 上游 headers 与 env 值支持 `${ENV_VAR}` 引用，加载期解析；�
 #### FR-PL-006 外部策略后端适配（OPA） P2 V1.2
 配置 `policy_backend_url` 后启用 OPA 适配器：本地显式规则优先；回落默认值时查询外部端点 `POST {input:{agent,server,tool,arguments}}`，接受 `{"result":{"decision":...}}` 或 `{"decision":...}}`，decision 仅 allow/deny/ask；传输错误/非 2xx/非法词一律 fail-closed 拒绝并留痕规则名 `opa:error` / `opa:invalid`。
 
+### 3.8 模块：V0.3 增量需求（运维与治理强化）
+
+#### FR-CLI-006 策略模拟器 P1 V0.3
+`agentgate check`：对给定 agent/server/tool/arguments 输出决策（动作+命中规则），不启动上游；`--cases` 批量 JSON（含可选 `expect` 断言，存在不匹配时退出码 1，供 CI 策略测试）。仅评估本地规则（不查询外部策略后端）。
+
+#### FR-GW-012 上游调用超时 P1 V0.3
+server 级 `call_timeout_seconds`（默认 120s，0=关闭）：上游超时转为可读 isError + `upstream_timeout` 审计；判定对 SDK 的多种超时包装（TimeoutError / McpError 文本 / ExceptionGroup）均生效。
+
+#### FR-PL-007 工具调用限流 P1 V0.3
+server 策略级 `rate_limit: {calls, window_seconds}`（滑动窗口，内存实现）：仅门控 allow/grant/ask 决策（显式 deny 不受影响）；ask 尝试计入窗口；超限 fail-closed（含 retry_after），审计 `rate_limited`。
+
+#### FR-CLI-007 Web 控制台认证 P1 V0.3
+环境变量 `AGENTGATE_UI_TOKEN` 设置后控制台所有请求强制携带 token（Bearer 头或 `?token=`，表单内嵌）；未设置时拒绝绑定非回环地址（fail-closed）。
+
+#### FR-AP-008 委托存储跨进程锁 P1 V0.3
+grants.json 写路径加独占文件锁（msvcrt/fcntl，有限重试）：锁→重读→修改→原子写，消除网关与 CLI 并发 read-modify-write 竞态；读路径依赖原子替换保证一致。
+
+#### FR-AU-005 审计汇总报表 P2 V0.3
+`agentgate report`：按 agent×tool 汇总 allow/grant、ask→ok、denied 计数与拒绝率；`--since` ISO 过滤；table/json/csv 三种输出；包含已轮转审计文件。
+
+#### FR-OPS-001 打包与 CI P2 V0.3
+Dockerfile（非 root slim）+ docker-compose 示例（gateway+console）；GitHub Actions 3 平台 × Python 3.11/3.13 矩阵；策略 JSON Schema（编辑器补全）。
+
 ### 3.5 模块：CLI（CLI）
 
 #### FR-CLI-001 run P0 V1.0
@@ -277,6 +300,7 @@ v0.1 输出为英文（错误信息面向开发者）；代码与文档 UTF-8，
 | V1.0 | 2026-11-02 | 两轮复审修正后定稿（见 8.4） | 用户预授权的自行复审 |
 | V1.1 | 2026-11-02 | 依据 DR-003 追加 §3.6 增量需求：FR-GW-007（HTTP 入口）、FR-GW-008（prompts/resources 代理）、FR-PL-005（能力开关）、FR-AP-007（审批签名）；§7 扩展清单中 EX-1/3/4 移入本版实现 | 用户授权的扩展决策 |
 | V1.2 | 2026-11-02 | 追加 §3.7 增量需求：FR-GW-009（headers 凭据注入）、FR-GW-010（策略热更新）、FR-GW-011（多 agent 单进程 HTTP）、FR-AU-004（审计轮转）、FR-CLI-005（Web 审批台）、FR-PL-006（OPA 后端适配）；§7 扩展清单中 EX-2/5/6 移入本版实现，路线图全部条目落地 | 用户指示"继续扩展实现所有功能" |
+| V1.3/产品 v0.3 | 2026-11-03 | 追加 §3.8：FR-CLI-006（策略模拟器）、FR-GW-012（调用超时）、FR-PL-007（限流）、FR-CLI-007（控制台认证）、FR-AP-008（委托锁）、FR-AU-005（报表）、FR-OPS-001（打包与 CI） | 用户授权的持续迭代（时间盒至 4:10） |
 
 ### 8.4 审核日志（两轮自行复审）
 **第 1 轮（完整性）**——发现并修正：① 补 FR-AU-003（参数留痕边界：审计默认不含完整参数，仅哈希；pending 文件含原文供人类审阅），原稿未定义敏感参数扩散面；② 补 NFR-COMPAT-001 与 NFR-PERF-001/002 量化（原稿性能/兼容为定性）；③ 补 FR-GW-006 上游故障隔离与"全部失败拒绝启动"语义；④ 8.1 矩阵补充 NFR 映射。
