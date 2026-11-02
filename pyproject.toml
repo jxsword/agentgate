@@ -19,11 +19,6 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Operating System :: OS Independent",
 ]
-
-[project.urls]
-Homepage = "https://github.com/jxsword/agentgate"
-Changelog = "https://github.com/jxsword/agentgate/blob/main/CHANGELOG.md"
-Issues = "https://github.com/jxsword/agentgate/issues"
 dependencies = [
     "mcp>=2.3",
     "pyyaml>=6.0",
@@ -31,6 +26,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[project.urls]
+Homepage = "https://github.com/jxsword/agentgate"
+Changelog = "https://github.com/jxsword/agentgate/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jxsword/agentgate/issues"
 
 [project.scripts]
 agentgate = "agentgate.cli:main"
