@@ -224,6 +224,13 @@ agentgate log --verify        # 校验全部审计文件（含轮转文件）
 - **一键演示**：`agentgate demo`（自动跑通 allow→审批→grant→deny→prompts/resources 全流程）
 - **基准**：`python scripts/bench.py -n 500`（本机实测 p50≈8.5ms / p95≈10.2ms，含上游往返）
 
+### 4.1.16 v0.6 快捷项
+
+- **策略组合**：`extends: base.yaml`（相对路径；基座深合并、子文件覆盖；循环检测报错）。多环境共用基座、只覆盖差异
+- **委托用量**：`agentgate report --grants`——每个委托被使用的次数/状态/审批人，识别"已不在册"的引用（table/json）
+- **委托详情**：`agentgate grants <id>`
+- **按请求身份路由**（v0.5）在 `--agent all --http` 上叠加 `--trust-agent-header`：客户端请求头 `X-Agentgate-Agent: <agent>`，缺失/未知 401
+
 ### 4.1.12 Docker 部署（v0.3）
 
 ```bash
