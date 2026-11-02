@@ -129,6 +129,7 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
                     f"<button class='allow'>allow</button></form>"
                     f"<form method='post' action='{_action('/approve/' + str(r.get('id')))}'>"
                     f"<input type='hidden' name='action' value='deny'>"
+                    f"reason <input name='reason' size='16' placeholder='why denied'>"
                     f"<button class='deny'>deny</button></form>"
                     f"</td></tr>"
                 )
@@ -163,8 +164,9 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
         form = await request.form()
         allow = form.get("action") == "allow"
         approver = str(form.get("approver") or "web-console")
+        reason = str(form.get("reason") or "") or None
         try:
-            mgr.decide(request_id, allow=allow, approver=f"web:{approver}")
+            mgr.decide(request_id, allow=allow, approver=f"web:{approver}", reason=reason)
         except Exception as e:  # noqa: BLE001 - surface as flash via query param
             return RedirectResponse(f"/?error={_esc(e)}", status_code=303)
         return RedirectResponse("/", status_code=303)

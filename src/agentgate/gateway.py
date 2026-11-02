@@ -306,11 +306,14 @@ class Gateway:
             )
 
         if not human.get("allow"):
+            reason = human.get("reason")
             self.audit.append(
-                "ask_denied", request_id=request["id"], approver=human.get("approver"), **base
+                "ask_denied", request_id=request["id"], approver=human.get("approver"),
+                reason=reason, **base,
             )
             return error_result(
                 f"agentgate: human '{human.get('approver')}' denied tool {full_name!r}."
+                + (f" Reason: {reason}" if reason else "")
             )
 
         grant_id = None
@@ -473,6 +476,37 @@ class Gateway:
 
     # ---- lifecycle ----
 
+    def _startup_cleanup(self) -> None:
+        """G2: crash leftovers older than the ask timeout cannot belong to a live waiter."""
+        removed = self.approvals.cleanup_stale(self.config.ask_timeout_seconds)
+        if removed:
+            self.audit.append("pending_cleanup", agent=self.agent, removed=removed)
+            print(f"[agentgate] removed {removed} stale pending approval file(s)", file=sys.stderr)
+
+    # ---- ops endpoints (G4) ----
+
+    def _status_payload(self) -> dict[str, Any]:
+        return {
+            "agent": self.agent,
+            "upstreams": {
+                name: (u.server_info.name if u.server_info else "?")
+                for name, u in self.upstreams.items()
+            },
+            "on_ask": self.config.on_ask,
+            "ask_timeout_seconds": self.config.ask_timeout_seconds,
+            "policy_backend": getattr(self.config, "policy_backend_url", None),
+        }
+
+    async def _healthz(self, request):
+        from starlette.responses import JSONResponse
+
+        return JSONResponse({"ok": True})
+
+    async def _status(self, request):
+        from starlette.responses import JSONResponse
+
+        return JSONResponse(self._status_payload())
+
     def build_server(self) -> Server:
         server = Server(
             f"agentgate-{self.agent}",
@@ -489,6 +523,7 @@ class Gateway:
     async def run_stdio(self) -> None:
         async with AsyncExitStack() as stack:
             await self._start_upstreams(stack)
+            self._startup_cleanup()
             watcher = None
             if self.watch_policy and self.config_path:
                 watcher = asyncio.create_task(self._watch_policy())
@@ -518,11 +553,20 @@ class Gateway:
 
         async with AsyncExitStack() as stack:
             await self._start_upstreams(stack)
+            self._startup_cleanup()
             watcher = None
             if self.watch_policy and self.config_path:
                 watcher = asyncio.create_task(self._watch_policy())
             server = self.build_server()
-            app = server.streamable_http_app(host=host)
+            from starlette.routing import Route as _Route
+
+            app = server.streamable_http_app(
+                host=host,
+                custom_starlette_routes=[
+                    _Route("/healthz", self._healthz),
+                    _Route("/status", self._status),
+                ],
+            )
             self.audit.append(
                 "gateway_start",
                 agent=self.agent,
@@ -649,9 +693,26 @@ async def serve_multi_http(config: Config, state_dir: str | None, host: str, por
                     await lstack.enter_async_context(manager.run())
                 yield
 
+        async def _healthz(request):
+            from starlette.responses import JSONResponse
+
+            return JSONResponse({"ok": True, "agents": sorted(config.agents)})
+
+        async def _status(request):
+            from starlette.responses import JSONResponse
+
+            return JSONResponse({
+                "agents": sorted(config.agents),
+                "upstreams": {n: (u.server_info.name if u.server_info else "?")
+                              for n, u in shared.items()},
+                "on_ask": config.on_ask,
+                "ask_timeout_seconds": config.ask_timeout_seconds,
+            })
+
         routes = [Route(f"/{agent}/mcp", StreamableHTTPASGIApp(manager),
                         methods=["GET", "POST", "DELETE"])
                   for agent, _, manager in units]
+        routes += [Route("/healthz", _healthz), Route("/status", _status)]
         app = Starlette(routes=routes, lifespan=_lifespan)
 
         watcher = None

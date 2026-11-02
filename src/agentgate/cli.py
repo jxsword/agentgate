@@ -62,7 +62,8 @@ def cmd_pending(args) -> int:
 def cmd_approve(args) -> int:
     mgr = ApprovalManager(_state_dir(args))
     try:
-        decision = mgr.decide(args.request_id, allow=args.allow, approver=args.approver)
+        decision = mgr.decide(args.request_id, allow=args.allow, approver=args.approver,
+                              reason=args.reason)
     except ApprovalError as e:
         print(f"agentgate: {e}", file=sys.stderr)
         return 1
@@ -246,6 +247,35 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_validate(args) -> int:
+    """G1 (v0.4): load and validate a policy without starting anything."""
+    from .config import ConfigError
+
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        print(f"agentgate: INVALID - {e}", file=sys.stderr)
+        return 1
+    print(f"OK: {len(config.servers)} server(s), {len(config.agents)} agent(s), "
+          f"default={config.default_decision}, on_ask={config.on_ask}")
+    for server, scfg in config.servers.items():
+        detail = scfg.command or scfg.url or "?"
+        timeout = f" timeout={scfg.call_timeout_seconds}s" if scfg.call_timeout_seconds else ""
+        print(f"  server {server}: {scfg.transport} {detail}{timeout}")
+    for agent, apol in config.agents.items():
+        for server, spol in apol.servers.items():
+            extras = []
+            if spol.rate_limit:
+                extras.append(f"rate={spol.rate_limit.calls}/{spol.rate_limit.window_seconds}s")
+            if spol.prompts == "allow":
+                extras.append("prompts=allow")
+            if spol.resources == "allow":
+                extras.append("resources=allow")
+            print(f"  agent {agent}@{server}: {len(spol.rules)} rule(s), "
+                  f"default={spol.default}" + (f", {', '.join(extras)}" if extras else ""))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -278,6 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--allow", dest="allow", action="store_true")
     g.add_argument("--deny", dest="allow", action="store_false")
     p_approve.add_argument("--approver", default="human")
+    p_approve.add_argument("--reason", default=None, help="why (passed back to the agent on denial)")
     p_approve.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_approve.set_defaults(func=cmd_approve)
 
@@ -310,6 +341,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--args", dest="arguments", help="JSON object of tool arguments (single-case mode)")
     p_check.add_argument("--cases", help="JSON array of {server, tool, arguments, expect?} for batch mode")
     p_check.set_defaults(func=cmd_check)
+
+    p_validate = sub.add_parser("validate", help="validate a policy file without starting the gateway")
+    p_validate.add_argument("--config", required=True)
+    p_validate.set_defaults(func=cmd_validate)
 
     p_report = sub.add_parser("report", help="aggregate audit into a per agent/tool decision report")
     p_report.add_argument("--state-dir", default=DEFAULT_STATE_DIR)

@@ -45,8 +45,8 @@ def approval_secret() -> str | None:
 
 
 def _signature(request_id: str, allow: bool, approver: str, decided_at: str,
-               arguments_hash: str, secret: str) -> str:
-    payload = f"{request_id}|{allow}|{approver}|{decided_at}|{arguments_hash}"
+               arguments_hash: str, secret: str, reason: str = "") -> str:
+    payload = f"{request_id}|{allow}|{approver}|{decided_at}|{arguments_hash}|{reason}"
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
@@ -58,6 +58,7 @@ def verify_decision(request: dict[str, Any], decision: dict[str, Any], secret: s
     expected = _signature(
         str(decision.get("id")), bool(decision.get("allow")), str(decision.get("approver")),
         str(decision.get("decided_at")), str(request.get("arguments_hash")), secret,
+        str(decision.get("reason", "")),
     )
     return hmac.compare_digest(sig, expected)
 
@@ -127,6 +128,24 @@ class ApprovalManager:
             await asyncio.sleep(0.2)
         raise TimeoutError(f"no approval decision for {request_id} within {timeout_seconds}s")
 
+    def cleanup_stale(self, max_age_seconds: float) -> int:
+        """G2 (v0.4): remove pending files older than max_age (crash leftovers).
+
+        A live approval request can never be older than the gateway's ask
+        timeout (the waiter fails-closed at that point), so anything older is
+        garbage. Returns the number removed.
+        """
+        now = time.time()
+        removed = 0
+        for p in self.pending_dir.glob("*.json"):
+            try:
+                if now - p.stat().st_mtime > max_age_seconds:
+                    p.unlink()
+                    removed += 1
+            except OSError:
+                pass
+        return removed
+
     # ---- CLI side (synchronous) ----
 
     def list_pending(self) -> list[dict[str, Any]]:
@@ -138,7 +157,8 @@ class ApprovalManager:
                 out.append({"id": p.stem, "error": "corrupt pending file"})
         return out
 
-    def decide(self, request_id: str, allow: bool, approver: str = "human") -> dict[str, Any]:
+    def decide(self, request_id: str, allow: bool, approver: str = "human",
+               reason: str | None = None) -> dict[str, Any]:
         _validate_request_id(request_id)
         pending_path = self.pending_dir / f"{request_id}.json"
         if not pending_path.exists():
@@ -153,12 +173,14 @@ class ApprovalManager:
             "approver": approver,
             "decided_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         }
+        if reason:
+            decision["reason"] = reason
         secret = approval_secret()
         if secret:
             request = json.loads(pending_path.read_text(encoding="utf-8"))
             decision["sig"] = _signature(
                 request_id, allow, approver, decision["decided_at"],
-                str(request.get("arguments_hash")), secret,
+                str(request.get("arguments_hash")), secret, reason or "",
             )
         decision_path.write_text(
             json.dumps(decision, ensure_ascii=False, indent=2), encoding="utf-8"
