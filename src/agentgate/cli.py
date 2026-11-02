@@ -109,6 +109,68 @@ def cmd_ui(args) -> int:
     return 0
 
 
+def cmd_check(args) -> int:
+    """F1 (v0.3): policy simulator - print decisions without running upstreams."""
+    import asyncio
+    import inspect
+    import json as _json
+
+    from .config import ConfigError
+    from .policy import PolicyEngine
+
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        print(f"agentgate: {e}", file=sys.stderr)
+        return 2
+    engine = PolicyEngine(config)
+
+    cases = []
+    if args.cases:
+        try:
+            cases = _json.loads(Path(args.cases).read_text(encoding="utf-8"))
+        except (OSError, _json.JSONDecodeError) as e:
+            print(f"agentgate: cannot read cases file: {e}", file=sys.stderr)
+            return 2
+        if not isinstance(cases, list):
+            print("agentgate: cases file must be a JSON array", file=sys.stderr)
+            return 2
+    else:
+        try:
+            arguments = _json.loads(args.arguments) if args.arguments else None
+        except _json.JSONDecodeError as e:
+            print(f"agentgate: --args must be valid JSON: {e}", file=sys.stderr)
+            return 2
+        cases = [{"server": args.server, "tool": args.tool, "arguments": arguments}]
+
+    failures = 0
+    for case in cases:
+        try:
+            server = case["server"]
+            tool = case["tool"]
+        except KeyError as e:
+            print(f"agentgate: case missing field {e}", file=sys.stderr)
+            return 2
+        arguments = case.get("arguments")
+        decision = engine.evaluate(args.agent, server, tool, arguments)
+        if inspect.isawaitable(decision):  # OPA-backed engine
+            decision = asyncio.run(decision)
+        label = decision.action
+        expect = case.get("expect")
+        marker = ""
+        if expect is not None:
+            ok = expect == decision.action
+            marker = "  ✓" if ok else f"  ✗ (expected {expect})"
+            failures += 0 if ok else 1
+        print(f"{args.agent}@{server}--{tool}: {label:<6} rule={decision.rule}{marker}")
+        if arguments is not None:
+            print(f"    args: {_json.dumps(arguments, ensure_ascii=False)}")
+    if failures:
+        print(f"\n{failures} case(s) did not match expectations")
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -164,6 +226,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_ui.add_argument("--host", default="127.0.0.1")
     p_ui.add_argument("--port", type=int, default=8756)
     p_ui.set_defaults(func=cmd_ui)
+
+    p_check = sub.add_parser("check", help="policy simulator: print decisions without running upstreams")
+    p_check.add_argument("--config", required=True)
+    p_check.add_argument("--agent", required=True)
+    p_check.add_argument("--server", help="upstream server name (single-case mode)")
+    p_check.add_argument("--tool", help="tool name, namespaced '<server>--<tool>' NOT needed here (single-case mode)")
+    p_check.add_argument("--args", dest="arguments", help="JSON object of tool arguments (single-case mode)")
+    p_check.add_argument("--cases", help="JSON array of {server, tool, arguments, expect?} for batch mode")
+    p_check.set_defaults(func=cmd_check)
 
     return parser
 

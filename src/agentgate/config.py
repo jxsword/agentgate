@@ -134,6 +134,8 @@ class ServerConfig:
     # http (streamable HTTP)
     url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    # v0.3 (F2): per-call upstream deadline; 0 disables
+    call_timeout_seconds: int = 120
 
     def __post_init__(self) -> None:
         if self.transport not in ("stdio", "http"):
@@ -142,6 +144,8 @@ class ServerConfig:
             raise ConfigError(f"servers.{self.name}: stdio transport requires 'command'")
         if self.transport == "http" and not self.url:
             raise ConfigError(f"servers.{self.name}: http transport requires 'url'")
+        if self.call_timeout_seconds < 0:
+            raise ConfigError(f"servers.{self.name}: call_timeout_seconds must be >= 0")
 
 
 @dataclass
@@ -224,6 +228,7 @@ def _parse_server_config(name: str, raw: dict) -> ServerConfig:
         env=env,
         url=raw.get("url"),
         headers=headers,
+        call_timeout_seconds=int(raw.get("call_timeout_seconds", 120)),
     )
 
 

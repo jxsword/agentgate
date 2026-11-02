@@ -74,7 +74,11 @@ class Upstream:
     async def call_tool(self, name: str, arguments: dict[str, Any] | None) -> types.CallToolResult:
         if self.session is None:
             raise UpstreamError(f"upstream '{self.name}' not started")
-        return await self.session.call_tool(name, arguments or {})
+        # F2 (v0.3): per-call deadline so a hung upstream cannot stall the gateway;
+        # 0 disables. The SDK surfaces timeouts as TimeoutError inside the session.
+        timeout = self.cfg.call_timeout_seconds or None
+        return await self.session.call_tool(name, arguments or {},
+                                            read_timeout_seconds=timeout)
 
     # ---- non-tool capabilities (V1.1, EX-4) ----
 

@@ -209,6 +209,16 @@ class Gateway:
         try:
             result = await self.upstreams[server].call_tool(tool, arguments)
         except Exception as e:  # noqa: BLE001
+            # F2: the SDK wraps read-deadline expiry in various shapes (TimeoutError,
+            # McpError("Request 'tools/call' timed out"), ExceptionGroup) - match both
+            timed_out = isinstance(e, (asyncio.TimeoutError, TimeoutError)) or \
+                "timed out" in str(e).lower()
+            if timed_out:
+                self.audit.append("upstream_timeout", error=str(e), **base)
+                return error_result(
+                    f"agentgate: upstream '{server}' did not answer tool {tool!r} within "
+                    f"{self.config.servers[server].call_timeout_seconds}s (call_timeout_seconds)."
+                )
             self.audit.append("upstream_error", error=str(e), **base)
             return error_result(f"agentgate: upstream '{server}' failed: {e}")
         self.audit.append(
