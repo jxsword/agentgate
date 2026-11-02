@@ -96,9 +96,26 @@ def cmd_log(args) -> int:
             return 2
         k, v = f.split("=", 1)
         filters[k] = v
+    since_ok = None
+    if getattr(args, "since", None):
+        import datetime as _dt
+
+        try:
+            since_ok = _dt.datetime.fromisoformat(args.since)
+        except ValueError:
+            print(f"agentgate: --since must be ISO 8601, got {args.since!r}", file=sys.stderr)
+            return 2
     records = log.tail(100_000)  # full file scan; tail caps memory
     matches = 0
     for r in records:
+        if since_ok is not None:
+            try:
+                import datetime as _dt
+
+                if _dt.datetime.strptime(r.get("ts", ""), "%Y-%m-%dT%H:%M:%S%z") < since_ok:
+                    continue
+            except ValueError:
+                pass
         if args.grep and args.grep.lower() not in json.dumps(r, ensure_ascii=False).lower():
             continue
         if any(str(r.get(k)) != v for k, v in filters.items()):
@@ -566,6 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--filter", action="append", metavar="KEY=VALUE",
                        help="only records where rec[key] == value (repeatable)")
     p_log.add_argument("--grep", help="substring match on the serialized record")
+    p_log.add_argument("--since", help="only records at/after this ISO 8601 timestamp")
     p_log.add_argument("-f", "--follow", action="store_true",
                        help="keep the log open and print new records (Ctrl+C to stop)")
     p_log.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
