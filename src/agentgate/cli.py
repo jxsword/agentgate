@@ -50,6 +50,9 @@ def cmd_run(args) -> int:
 def cmd_pending(args) -> int:
     mgr = ApprovalManager(_state_dir(args))
     pending = mgr.list_pending()
+    if getattr(args, "json", False):
+        print(json.dumps(pending, ensure_ascii=False, indent=2))
+        return 0
     if not pending:
         print("no pending approval requests")
         return 0
@@ -273,6 +276,10 @@ def cmd_report(args) -> int:
                 continue
             if rec.get("event") not in ("call", "call_denied", "ask_denied", "rate_limited"):
                 continue
+            if args.agent and rec.get("agent") != args.agent:
+                continue
+            if args.tool and rec.get("tool") != args.tool:
+                continue
             if since is not None:
                 try:
                     ts = _dt.datetime.strptime(rec.get("ts", ""), "%Y-%m-%dT%H:%M:%S%z")
@@ -397,6 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pending = sub.add_parser("pending", help="list pending approval requests")
     p_pending.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    p_pending.add_argument("--json", action="store_true", help="machine-readable output")
     p_pending.set_defaults(func=cmd_pending)
 
     p_approve = sub.add_parser("approve", help="approve or deny a pending request")
@@ -455,6 +463,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_report.add_argument("--since", help="only decisions after this ISO 8601 timestamp")
     p_report.add_argument("--format", choices=["table", "json", "csv"], default="table")
+    p_report.add_argument("--agent", help="only decisions by this agent")
+    p_report.add_argument("--tool", help="only decisions for this tool (bare name)")
     p_report.set_defaults(func=cmd_report)
 
     p_demo = sub.add_parser("demo", help="one-command demo (gateway + demo upstream + scripted client)")
