@@ -298,6 +298,48 @@ def cmd_report(args) -> int:
             else:  # call_denied / ask_denied / rate_limited
                 row["denied"] += 1
 
+    if args.grants:
+        # L1 (v0.6): delegation usage view - join call records (grant_id) with grants.json
+        grant_calls: dict[str, int] = {}
+        for src in sources:
+            for line in src.read_text(encoding="utf-8").splitlines():
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                gid = rec.get("grant_id")
+                if rec.get("event") == "call" and rec.get("decision") == "grant" and gid:
+                    grant_calls[gid] = grant_calls.get(gid, 0) + 1
+        from .grants import GrantStore as _GS
+
+        store = _GS(state / "grants.json")
+        known = {g.id for g in store.list(include_expired=True)}
+        if args.format == "json":
+            print(json.dumps({
+                "grants": [
+                    {"id": g.id, "agent": g.agent, "server": g.server, "tool": g.tool,
+                     "args_bound": bool(g.args_hash), "approver": g.approver,
+                     "uses": grant_calls.get(g.id, 0), "active": g.active(),
+                     "expires_at": g.expires_at}
+                    for g in store.list(include_expired=True)
+                ],
+                "unknown_grant_uses": sum(c for gid, c in grant_calls.items()
+                                          if gid not in known),
+            }, ensure_ascii=False, indent=2))
+            return 0
+        if not known and not grant_calls:
+            print("no grants found")
+            return 0
+        print(f"{'id':<14} {'scope':<36} {'uses':>5} {'state':<8} approver")
+        for g in store.list(include_expired=True):
+            scope = f"{g.agent}@{g.server}--{g.tool}" + (" (+args)" if g.args_hash else "")
+            st = "active" if g.active() else "expired"
+            print(f"{g.id:<14.14} {scope:<36.36} {grant_calls.get(g.id, 0):>5} {st:<8} {g.approver}")
+        orphan = sum(c for gid, c in grant_calls.items() if gid not in known)
+        if orphan:
+            print(f"(+{orphan} uses from grants no longer in grants.json)")
+        return 0
+
     if args.format == "json":
         print(json.dumps({
             "total_decisions": total_decisions,
@@ -465,6 +507,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--format", choices=["table", "json", "csv"], default="table")
     p_report.add_argument("--agent", help="only decisions by this agent")
     p_report.add_argument("--tool", help="only decisions for this tool (bare name)")
+    p_report.add_argument("--grants", action="store_true",
+                          help="delegation usage view (grant_id -> call count)")
     p_report.set_defaults(func=cmd_report)
 
     p_demo = sub.add_parser("demo", help="one-command demo (gateway + demo upstream + scripted client)")
