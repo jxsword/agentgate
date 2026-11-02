@@ -9,8 +9,21 @@ description = "Agent-native open-source authorization gateway for MCP: per-tool-
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-authors = [{ name = "agentgate" }]
+authors = [{ name = "jxsword" }]
 keywords = ["mcp", "agent", "authorization", "security", "gateway"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/jxsword/agentgate"
+Changelog = "https://github.com/jxsword/agentgate/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jxsword/agentgate/issues"
 dependencies = [
     "mcp>=2.3",
     "pyyaml>=6.0",

@@ -20,6 +20,12 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install
         run: pip install -e ".[dev]"
+      - name: Policy self-check
+        shell: bash
+        run: |
+          agentgate validate --config policies/example.yaml
+          printf '%s' '[{"server":"demo","tool":"delete_file","expect":"deny"},{"server":"demo","tool":"echo","expect":"allow"}]' > /tmp/cases.json
+          agentgate check --config policies/example.yaml --agent claude-code --cases /tmp/cases.json
       - name: Test
         run: pytest -q
       - name: Coverage (ubuntu only)
