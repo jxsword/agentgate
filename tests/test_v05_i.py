@@ -122,6 +122,10 @@ def _free_port() -> int:
 async def test_agent_header_routing(workdir):
     port = _free_port()
     cfg = write_config(workdir)
+    # two agents with opposite policies: same endpoint, isolated decisions
+    doc = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    doc["agents"]["beta"] = {"servers": {"demo": {"default": "deny", "tools": {"echo": "deny"}}}}
+    cfg.write_text(yaml.safe_dump(doc), encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, "-m", "agentgate", "run", "--config", str(cfg), "--agent", "all",
          "--http", f"127.0.0.1:{port}", "--trust-agent-header"],
@@ -146,16 +150,40 @@ async def test_agent_header_routing(workdir):
         assert got["none"] == 401 and got["bad"] == 401, got
         assert got["ok"] != 401, got  # known identity passes the auth gate
 
-        # full MCP session with the header (streamable-http per-request headers)
+        # full MCP sessions with the header (streamable-http per-request headers);
+        # sequential to keep anyio cancel scopes single-task (see test_http_gateway)
         from mcp import ClientSession
         from mcp.client.streamable_http import streamable_http_client, create_mcp_http_client
 
-        client = create_mcp_http_client(headers={"X-Agentgate-Agent": "bot"})
-        async with streamable_http_client(f"{base}/mcp", http_client=client) as (read, write):
-            async with ClientSession(read, write) as session:
-                await asyncio.wait_for(session.initialize(), timeout=10)
-                res = await session.call_tool("demo--echo", {"text": "via-header"})
-                assert not res.is_error and "echo: via-header" in res.content[0].text
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def session_as(agent: str):
+            connected = False
+            deadline = time.monotonic() + 20
+            while not connected and time.monotonic() < deadline:
+                try:
+                    client = create_mcp_http_client(
+                        headers={"X-Agentgate-Agent": agent})
+                    async with streamable_http_client(f"{base}/mcp", http_client=client) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await asyncio.wait_for(session.initialize(), timeout=10)
+                            connected = True
+                            yield session
+                except Exception:  # noqa: BLE001
+                    if connected:
+                        raise
+                    await asyncio.sleep(0.4)
+            if not connected:
+                raise RuntimeError(f"no session as {agent}")
+
+        async with session_as("bot") as sess_a:
+            res = await sess_a.call_tool("demo--echo", {"text": "as-bot"})
+            assert not res.is_error and "echo: as-bot" in res.content[0].text
+        async with session_as("beta") as sess_b:
+            # beta's policy denies echo even on the same /mcp endpoint
+            res = await sess_b.call_tool("demo--echo", {"text": "as-beta"})
+            assert res.is_error and "denied by policy" in res.content[0].text
     finally:
         proc.terminate()
         proc.wait(timeout=10)
