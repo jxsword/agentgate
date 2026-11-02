@@ -231,6 +231,15 @@ agentgate log --verify        # 校验全部审计文件（含轮转文件）
 - **委托详情**：`agentgate grants <id>`
 - **按请求身份路由**（v0.5）在 `--agent all --http` 上叠加 `--trust-agent-header`：客户端请求头 `X-Agentgate-Agent: <agent>`，缺失/未知 401
 
+### 4.1.17 环境诊断（v0.6）
+
+```bash
+agentgate doctor --config policy.yaml          # 环境与策略体检
+agentgate doctor --config policy.yaml --reach  # 同时探测上游可达性
+```
+
+检查项：Python 版本、mcp/pyyaml 依赖、state 目录可写、**审计哈希链完整性**（含轮转文件）、策略加载；`--reach` 会逐个启动/停止上游验证连通。任何 ✗ 退出码 1——排障第一步先跑它。
+
 ### 4.1.12 Docker 部署（v0.3）
 
 ```bash
