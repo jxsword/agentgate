@@ -37,15 +37,14 @@ class Upstream:
             )
             read, write = await stack.enter_async_context(stdio_client(params))
         else:
-            # HTTP headers (e.g. auth) are supplied via a pre-configured httpx client;
-            # v0.1 keeps header config out of the stdio path to avoid credential sprawl.
-            if self.cfg.headers:
-                raise UpstreamError(
-                    f"upstream '{self.name}': http headers are not supported in v0.1; "
-                    f"use an env-injected proxy or extend streamable_http_client wiring"
-                )
+            # EX-6: header values were resolved from ${ENV_VAR} refs at load time;
+            # build the HTTP client here so its lifecycle joins the gateway's stack
+            from mcp.client.streamable_http import create_mcp_http_client
+
+            client = create_mcp_http_client(headers=self.cfg.headers or None)
+            await stack.enter_async_context(client)
             read, write = await stack.enter_async_context(
-                streamable_http_client(self.cfg.url or "")
+                streamable_http_client(self.cfg.url or "", http_client=client)
             )
         session = ClientSession(read, write)
         await stack.enter_async_context(session)

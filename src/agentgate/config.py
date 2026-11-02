@@ -33,6 +33,8 @@ The YAML schema (v1):
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,6 +45,23 @@ DENY = "deny"
 ASK = "ask"
 DECISIONS = (ALLOW, DENY, ASK)
 BINDS = ("tool", "tool+args")
+
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def resolve_env_refs(value: str, where: str) -> str:
+    """Expand ${ENV_VAR} references; a missing variable is a config error (fail-closed).
+
+    Secrets never live in the policy file - only references to the environment
+    (SRS NFR-SEC-003 / EX-6).
+    """
+    def repl(m: re.Match[str]) -> str:
+        name = m.group(1)
+        env = os.environ.get(name)
+        if env is None:
+            raise ConfigError(f"{where}: environment variable {name!r} is not set (referenced as ${{{name}}})")
+        return env
+    return _ENV_REF.sub(repl, value)
 
 
 class ConfigError(ValueError):
@@ -123,13 +142,6 @@ class ServerConfig:
             raise ConfigError(f"servers.{self.name}: stdio transport requires 'command'")
         if self.transport == "http" and not self.url:
             raise ConfigError(f"servers.{self.name}: http transport requires 'url'")
-        if self.transport == "http" and self.headers:
-            # fail at load time instead of runtime: header values belong in env-injected
-            # plumbing, not policy files (SRS NFR-SEC-003); v0.1 does not wire them.
-            raise ConfigError(
-                f"servers.{self.name}: http headers are not supported in v0.1 "
-                f"(planned for EX-6 secret egress)"
-            )
 
 
 @dataclass
@@ -142,6 +154,9 @@ class Config:
     # request and block) or "deny" (fail closed, for CI/unattended runs)
     on_ask: str = "pending"
     ask_timeout_seconds: int = 300
+    # V1.2 (EX-5): optional external policy endpoint consulted for non-explicit
+    # local decisions (see policy_backends.OpaPolicyEngine)
+    policy_backend_url: str | None = None
 
     def __post_init__(self) -> None:
         if self.default_decision not in DECISIONS:
@@ -195,14 +210,20 @@ def _parse_server_policy(server: str, raw: object) -> ServerPolicy:
 
 def _parse_server_config(name: str, raw: dict) -> ServerConfig:
     transport = str(raw.get("transport", "stdio"))
+    headers = {str(k): str(v) for k, v in (raw.get("headers") or {}).items()}
+    # EX-6: header values may reference the environment via ${VAR}; resolved at
+    # load time, missing variables fail the load instead of leaking at request time
+    headers = {k: resolve_env_refs(v, f"servers.{name}.headers.{k}") for k, v in headers.items()}
+    env = {str(k): resolve_env_refs(str(v), f"servers.{name}.env.{k}") if "${" in str(v) else str(v)
+           for k, v in (raw.get("env") or {}).items()}
     return ServerConfig(
         name=name,
         transport=transport,
         command=raw.get("command"),
         args=[str(a) for a in raw.get("args", [])],
-        env={str(k): str(v) for k, v in (raw.get("env") or {}).items()},
+        env=env,
         url=raw.get("url"),
-        headers={str(k): str(v) for k, v in (raw.get("headers") or {}).items()},
+        headers=headers,
     )
 
 
@@ -226,6 +247,7 @@ def load_config(path: str | Path) -> Config:
         state_dir=Path(str(raw.get("state_dir", ".agentgate"))),
         on_ask=str(raw.get("on_ask", "pending")),
         ask_timeout_seconds=int(raw.get("ask_timeout_seconds", 300)),
+        policy_backend_url=raw.get("policy_backend_url"),
     )
     for name, scfg in (raw.get("servers") or {}).items():
         if not isinstance(scfg, dict):

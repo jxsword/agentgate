@@ -10,6 +10,7 @@ file-based approval flow. Every decision is appended to the audit log.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sys
 from contextlib import AsyncExitStack
 from typing import Any
@@ -49,6 +50,8 @@ class Gateway:
         approvals: ApprovalManager,
         grants: GrantStore,
         audit: AuditLog,
+        config_path: str | None = None,
+        watch_policy: bool = True,
     ) -> None:
         self.config = config
         self.agent = agent
@@ -56,7 +59,51 @@ class Gateway:
         self.approvals = approvals
         self.grants = grants
         self.audit = audit
+        self.config_path = config_path
+        self.watch_policy = watch_policy
         self.upstreams: dict[str, Upstream] = {}
+
+    def _reload_policy_once(self, path, last_mtime) -> float | None:
+        """One hot-reload step; returns the mtime to remember (None on stat error)."""
+        from pathlib import Path
+
+        path = Path(path)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return last_mtime
+        if mtime == last_mtime:
+            return mtime
+        from .config import ConfigError, load_config
+
+        try:
+            new_config = load_config(path)
+        except ConfigError as e:
+            self.audit.append("policy_reload_failed", agent=self.agent, error=str(e))
+            print(f"[agentgate] policy reload FAILED (keeping old policy): {e}", file=sys.stderr)
+            return mtime
+        self.config = new_config
+        self.engine.config = new_config
+        self.audit.append("policy_reloaded", agent=self.agent,
+                          agents=sorted(new_config.agents), servers=sorted(new_config.servers))
+        print(f"[agentgate] policy reloaded from {path}", file=sys.stderr)
+        return mtime
+
+    async def _watch_policy(self) -> None:
+        """V1.2: hot-reload the policy file (atomic swap; errors keep the old policy)."""
+        import asyncio
+        from pathlib import Path
+
+        if not self.config_path:
+            return
+        path = Path(self.config_path)
+        try:
+            last_mtime: float | None = path.stat().st_mtime
+        except OSError:
+            return
+        while True:
+            await asyncio.sleep(2.0)
+            last_mtime = self._reload_policy_once(path, last_mtime)
 
     async def _start_upstreams(self, stack: AsyncExitStack) -> None:
         for name, scfg in self.config.servers.items():
@@ -112,7 +159,8 @@ class Gateway:
         server, tool = parsed
 
         try:
-            decision = self.engine.evaluate(self.agent, server, tool, arguments)
+            maybe = self.engine.evaluate(self.agent, server, tool, arguments)
+            decision = await maybe if inspect.isawaitable(maybe) else maybe
         except Exception as e:  # noqa: BLE001 - policy engine bugs must never open the gate
             self.audit.append(
                 "policy_error",
@@ -413,6 +461,9 @@ class Gateway:
     async def run_stdio(self) -> None:
         async with AsyncExitStack() as stack:
             await self._start_upstreams(stack)
+            watcher = None
+            if self.watch_policy and self.config_path:
+                watcher = asyncio.create_task(self._watch_policy())
             server = self.build_server()
             self.audit.append(
                 "gateway_start",
@@ -425,6 +476,8 @@ class Gateway:
                 async with stdio_server() as (read, write):
                     await server.run(read, write, server.create_initialization_options())
             finally:
+                if watcher:
+                    watcher.cancel()
                 self.audit.append("gateway_stop", agent=self.agent)
 
     async def run_http(self, host: str, port: int) -> None:
@@ -437,6 +490,9 @@ class Gateway:
 
         async with AsyncExitStack() as stack:
             await self._start_upstreams(stack)
+            watcher = None
+            if self.watch_policy and self.config_path:
+                watcher = asyncio.create_task(self._watch_policy())
             server = self.build_server()
             app = server.streamable_http_app(host=host)
             self.audit.append(
@@ -452,20 +508,37 @@ class Gateway:
             try:
                 await uvicorn_server.serve()
             finally:
+                if watcher:
+                    watcher.cancel()
                 self.audit.append("gateway_stop", agent=self.agent)
 
 
 async def serve(config: Config, agent: str, state_dir: str | None = None,
-                http: str | None = None) -> None:
+                http: str | None = None, config_path: str | None = None,
+                watch_policy: bool = True) -> None:
     from pathlib import Path
 
     state = Path(state_dir) if state_dir is not None else config.state_dir
     state.mkdir(parents=True, exist_ok=True)
+    if http and agent.lower() == "all":
+        host, _, port = http.rpartition(":")
+        if not host or not port.isdigit():
+            raise ValueError(f"--http expects HOST:PORT, got {http!r}")
+        await serve_multi_http(config, state_dir, host, int(port),
+                               config_path=config_path, watch_policy=watch_policy)
+        return
+    if agent.lower() == "all":
+        raise ValueError("--agent all is only valid together with --http")
     audit = AuditLog(state / "audit.jsonl")
     grants = GrantStore(state / "grants.json")
     approvals = ApprovalManager(state)
     engine = PolicyEngine(config, grants)
-    gateway = Gateway(config, agent, engine, approvals, grants, audit)
+    if getattr(config, "policy_backend_url", None):
+        from .policy_backends import OpaPolicyEngine
+
+        engine = OpaPolicyEngine(config, grants, url=config.policy_backend_url)
+    gateway = Gateway(config, agent, engine, approvals, grants, audit,
+                      config_path=config_path, watch_policy=watch_policy)
     if http:
         host, _, port = http.rpartition(":")
         if not host or not port.isdigit():
@@ -476,5 +549,123 @@ async def serve(config: Config, agent: str, state_dir: str | None = None,
 
 
 def serve_sync(config: Config, agent: str, state_dir: str | None = None,
-               http: str | None = None) -> None:
-    asyncio.run(serve(config, agent, state_dir, http))
+               http: str | None = None, config_path: str | None = None,
+               watch_policy: bool = True) -> None:
+    asyncio.run(serve(config, agent, state_dir, http, config_path, watch_policy))
+
+
+async def serve_multi_http(config: Config, state_dir: str | None, host: str, port: int,
+                           config_path: str | None = None, watch_policy: bool = True) -> None:
+    """V1.2: one HTTP process serving every agent in the policy.
+
+    Each agent gets its own Gateway (own upstream connections, own namespace)
+    mounted at /<agent>/mcp. Grants/audit/approvals share the state directory
+    (grants are agent-scoped records, so sharing the store is safe).
+    """
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from mcp.server.streamable_http_manager import (
+        StreamableHTTPASGIApp,
+        StreamableHTTPSessionManager,
+    )
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from pathlib import Path
+
+    state = Path(state_dir) if state_dir is not None else config.state_dir
+    state.mkdir(parents=True, exist_ok=True)
+    audit = AuditLog(state / "audit.jsonl")
+    grants = GrantStore(state / "grants.json")
+    approvals = ApprovalManager(state)
+
+    security = TransportSecuritySettings(
+        allowed_hosts=[f"{host}:*", "127.0.0.1:*", "localhost:*", "[::1]:*"],
+        allowed_origins=["null"],
+    ) if host in ("127.0.0.1", "localhost", "::1") else None
+
+    units: list[tuple[Gateway, StreamableHTTPSessionManager]] = []
+    core = AsyncExitStack()
+    try:
+        # one shared set of upstream connections; MCP sessions handle concurrent
+        # requests, so N gateways can share M upstreams safely
+        shared: dict[str, Upstream] = {}
+        for name, scfg in config.servers.items():
+            upstream = Upstream(scfg)
+            try:
+                await upstream.start(core)
+                shared[name] = upstream
+            except Exception as e:  # noqa: BLE001
+                print(f"[agentgate] FAILED to start upstream '{name}': {e}", file=sys.stderr)
+                audit.append("upstream_error", server=name, error=str(e), agent="(multi)")
+        if not shared and config.servers:
+            raise RuntimeError("no upstream MCP server could be started")
+
+        for agent in sorted(config.agents):
+            engine = PolicyEngine(config, grants)
+            gw = Gateway(config, agent, engine, approvals, grants, audit,
+                         config_path=config_path, watch_policy=False)
+            gw.upstreams = shared
+            server = gw.build_server()
+            manager = StreamableHTTPSessionManager(
+                app=server, security_settings=security,
+            )
+            units.append((agent, gw, manager))
+            audit.append("gateway_start", agent=agent, servers=sorted(gw.upstreams),
+                         on_ask=config.on_ask, transport="http", http=f"{host}:{port}")
+
+        async def _lifespan(app):
+            async with AsyncExitStack() as lstack:
+                for _, _, manager in units:
+                    await lstack.enter_async_context(manager.run())
+                yield
+
+        routes = [Route(f"/{agent}/mcp", StreamableHTTPASGIApp(manager),
+                        methods=["GET", "POST", "DELETE"])
+                  for agent, _, manager in units]
+        app = Starlette(routes=routes, lifespan=_lifespan)
+
+        watcher = None
+        if watch_policy and config_path:
+            async def _watch_all():
+                from .config import ConfigError, load_config
+
+                path = Path(config_path)
+                last = path.stat().st_mtime
+                while True:
+                    await asyncio.sleep(2.0)
+                    try:
+                        mtime = path.stat().st_mtime
+                    except OSError:
+                        continue
+                    if mtime == last:
+                        continue
+                    last = mtime
+                    try:
+                        new_config = load_config(path)
+                    except ConfigError as e:
+                        audit.append("policy_reload_failed", error=str(e))
+                        continue
+                    # NOTE: agents/servers set changes need process restart; policy
+                    # values (decisions/args_match/defaults) hot-swap safely.
+                    for _, gw, _ in units:
+                        if gw.agent in new_config.agents:
+                            gw.config = new_config
+                            gw.engine.config = new_config
+                    audit.append("policy_reloaded", agents=sorted(new_config.agents))
+            watcher = asyncio.create_task(_watch_all())
+
+        audit.append("gateway_start", agent="(multi)", agents=sorted(config.agents),
+                     servers=sorted(config.servers), transport="http", http=f"{host}:{port}")
+        uvicorn_server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+        try:
+            await uvicorn_server.serve()
+        finally:
+            if watcher:
+                watcher.cancel()
+            await core.aclose()
+            audit.append("gateway_stop", agent="(multi)")
+    except BaseException:
+        await core.aclose()
+        raise

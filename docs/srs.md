@@ -155,6 +155,26 @@ server 策略级 `prompts:` / `resources:` 键，取值仅 allow|deny（默认 d
 #### FR-AP-007 审批签名 P1 V1.1
 设置环境变量 `AGENTGATE_APPROVAL_SECRET` 后，`approve` 写入的决策附带 HMAC-SHA256 签名（载荷：id|allow|approver|decided_at|arguments_hash），网关验签；未签名/验签失败一律视为拒绝（fail-closed），审计 `approval_signature_invalid`。密钥仅来自环境变量（NFR-SEC-003）。
 
+### 3.7 模块：V1.2 增量需求（路线图收尾）
+
+#### FR-GW-009 HTTP 上游凭据注入 P1 V1.2
+HTTP 上游 headers 与 env 值支持 `${ENV_VAR}` 引用，加载期解析；缺失变量导致加载失败（fail-closed）。凭据永不写入策略文件（NFR-SEC-003）。
+
+#### FR-GW-010 策略热更新 P1 V1.2
+网关每 2s 轮询策略文件 mtime；变更后重新加载并原子换入（决策规则/默认值/args_match 即时生效）。非法新策略保留旧策略并审计 `policy_reload_failed`；成功审计 `policy_reloaded`。agents/servers 集合变更需重启（文档明示）。`--no-watch` 关闭。
+
+#### FR-GW-011 多 agent 单进程 HTTP P2 V1.2
+`--agent all --http HOST:PORT`：每个策略内 agent 挂载 `/<agent>/mcp`；上游连接共享（MCP 会话支持并发请求），授权按 agent 隔离。
+
+#### FR-AU-004 审计轮转 P2 V1.2
+审计文件超过 10MB 轮转为 `audit-<时间戳>.jsonl`，历史保留不截断。
+
+#### FR-CLI-005 Web 审批台 P1 V1.2
+`agentgate ui [--state-dir D --host H --port P]`：服务端渲染页面展示待审批（批准/拒绝按钮，走与 CLI 完全相同的 one-vote + HMAC 签名路径，审批人记为 `web:<name>`）、有效委托（撤销按钮，逐请求重读 grants.json）、审计尾部（5s 自动刷新）。默认绑定 127.0.0.1。
+
+#### FR-PL-006 外部策略后端适配（OPA） P2 V1.2
+配置 `policy_backend_url` 后启用 OPA 适配器：本地显式规则优先；回落默认值时查询外部端点 `POST {input:{agent,server,tool,arguments}}`，接受 `{"result":{"decision":...}}` 或 `{"decision":...}}`，decision 仅 allow/deny/ask；传输错误/非 2xx/非法词一律 fail-closed 拒绝并留痕规则名 `opa:error` / `opa:invalid`。
+
 ### 3.5 模块：CLI（CLI）
 
 #### FR-CLI-001 run P0 V1.0
@@ -218,6 +238,8 @@ v0.1 输出为英文（错误信息面向开发者）；代码与文档 UTF-8，
 
 ## 7. 未来扩展功能
 
+> 状态（2026-11-03）：EX-1/2/3/4/5/6 已分别于 V1.1/V1.2 实现并移入 §3.6/§3.7；下表保留原规划记录。EX-7 仍未排期。
+
 | 编号 | 功能 | 描述 | 预期价值 | 建议版本 | 优先级 | 接口预留说明 |
 |---|---|---|---|---|---|---|
 | EX-1 | HTTP 网关入口 | 以 streamable HTTP 对外服务，多客户端共享 | 团队共享网关 | V2.0 | E-P1 | Gateway.build_server() 与 stdio 解耦已预留；serve() 参数化传输 |
@@ -254,6 +276,7 @@ v0.1 输出为英文（错误信息面向开发者）；代码与文档 UTF-8，
 | V0.1 | 2026-11-02 | 初稿 | 阶段2产出 |
 | V1.0 | 2026-11-02 | 两轮复审修正后定稿（见 8.4） | 用户预授权的自行复审 |
 | V1.1 | 2026-11-02 | 依据 DR-003 追加 §3.6 增量需求：FR-GW-007（HTTP 入口）、FR-GW-008（prompts/resources 代理）、FR-PL-005（能力开关）、FR-AP-007（审批签名）；§7 扩展清单中 EX-1/3/4 移入本版实现 | 用户授权的扩展决策 |
+| V1.2 | 2026-11-02 | 追加 §3.7 增量需求：FR-GW-009（headers 凭据注入）、FR-GW-010（策略热更新）、FR-GW-011（多 agent 单进程 HTTP）、FR-AU-004（审计轮转）、FR-CLI-005（Web 审批台）、FR-PL-006（OPA 后端适配）；§7 扩展清单中 EX-2/5/6 移入本版实现，路线图全部条目落地 | 用户指示"继续扩展实现所有功能" |
 
 ### 8.4 审核日志（两轮自行复审）
 **第 1 轮（完整性）**——发现并修正：① 补 FR-AU-003（参数留痕边界：审计默认不含完整参数，仅哈希；pending 文件含原文供人类审阅），原稿未定义敏感参数扩散面；② 补 NFR-COMPAT-001 与 NFR-PERF-001/002 量化（原稿性能/兼容为定性）；③ 补 FR-GW-006 上游故障隔离与"全部失败拒绝启动"语义；④ 8.1 矩阵补充 NFR 映射。

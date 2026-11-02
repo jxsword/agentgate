@@ -37,12 +37,15 @@ agentgate revoke <grant_id>       # 即时撤销
 
 - **fail-closed**：无规则、异常、未知工具、审批超时一律拒绝；默认决策 `deny`
 - **声明式策略**：YAML——agent × server × 工具 glob × 参数条件（`args_match`）× 决策
-- **人类审批**：文件式协议，无需端口、无需了解 MCP，任何终端可用
+- **人类审批**：文件式协议 + **Web 审批台**（`agentgate ui`），无需了解 MCP
 - **范围委托**：批准一次 = 在 TTL 内（可选绑定到完全相同参数）重复放行，可随时 revoke
-- **审计**：JSONL 追加式、fsync 落盘，每次调用必有决策留痕
+- **审计**：JSONL 追加式、fsync 落盘、10MB 自动轮转，每次调用必有决策留痕
 - **prompts/resources 代理**（V1.1）：协议完整覆盖，server 级能力开关
-- **HTTP 入口**（V1.1）：`--http HOST:PORT`，多客户端共享一个网关
+- **HTTP 入口**（V1.1/V1.2）：`--http HOST:PORT`；`--agent all` 单进程多 agent（`/<agent>/mcp`）
 - **审批签名**（V1.1）：`AGENTGATE_APPROVAL_SECRET` 环境变量启用 HMAC 验签，伪造裁决失效
+- **热更新**（V1.2）：策略文件改动 2 秒内生效，非法策略自动回退
+- **外部策略后端**（V1.2）：`policy_backend_url` 对接 OPA 风格决策端点，故障 fail-closed
+- **凭据注入**（V1.2）：上游 headers/env 支持 `${ENV_VAR}` 引用，缺变量拒绝启动
 
 ## 文档
 

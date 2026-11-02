@@ -227,7 +227,18 @@ agentgate revoke   <grant_id> [--state-dir D]
 - 签名：approve 时对 `id|allow|approver|decided_at|arguments_hash` 计算 HMAC-SHA256 写入 decision 文件 `sig` 字段；网关在消费决策前验签（hmac.compare_digest）。
 - 失败语义：未签名或验签失败 → 视为拒绝 + `approval_signature_invalid` 审计（fail-closed）。签名把"伪造 decisions 文件"从"写个 JSON 即可"提升为"需持有共享密钥"，闭环了设计文档 §6 的已知局限之一。
 
-## 8. 部署形态
+## 10. V1.2 增量设计（路线图收尾）
+
+| 特性 | 设计要点 |
+|---|---|
+| headers 凭据注入（EX-6） | 配置加载期 `${VAR}` 插值（含 env 值）；缺变量=加载失败。upstream 为 HTTP 上游构建 `create_mcp_http_client(headers=...)` 并入 AsyncExitStack 生命周期 |
+| 策略热更新 | Gateway 每 2s 轮询 mtime → `_reload_policy_once()` 原子换入 `self.config`/`engine.config`；非法新策略保留旧策略（audit `policy_reload_failed`）。agents/servers 集合变更需重启（路由与上游连接拓扑在启动期固定） |
+| 审计轮转 | AuditLog 超 10MB 重命名为 `audit-<ts>.jsonl`，历史不截断 |
+| Web 审批台（EX-2） | `agentgate ui`（Starlette，服务端渲染，无 JS 构建）：待审批（allow/deny 表单）→ 复用 ApprovalManager.decide（one-vote + HMAC 自动生效，审批人 `web:<name>`）；grants 逐请求重读磁盘（防快照过期）；默认 127.0.0.1，暴露需自备认证 |
+| 多 agent HTTP | `--agent all`：每 agent 一个 Gateway（独立策略实例）挂载 `/<agent>/mcp`；上游连接共享（MCP 会话并发安全）；lifespan 逐个进入各 session manager；热更新单 watcher 换入全部 gateway |
+| OPA 适配（EX-5） | `policy_backend_url` → OpaPolicyEngine：本地显式决策优先，默认值回落时 POST `{input}` 查询；`{"result":{...}}` 双形兼容；任何后端故障 fail-closed（`opa:error`/`opa:invalid`）；evaluate 为协程，Gateway 以 isawaitable 兼容两种引擎 |
+
+## 11. 部署形态
 
 ```mermaid
 graph LR

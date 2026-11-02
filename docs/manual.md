@@ -91,11 +91,12 @@ agentgate run --config policy.yaml --agent claude-code
 
 ```bash
 agentgate run --config policy.yaml --agent claude-code --http 127.0.0.1:8080
+# 多 agent 单进程（V1.2）：每个 agent 在 /<agent>/mcp
+agentgate run --config policy.yaml --agent all --http 127.0.0.1:8080
 ```
 
-- 客户端以 streamable HTTP 连接 `http://127.0.0.1:8080/mcp`；
-- 一个网关进程可同时服务多个客户端连接；agent 身份仍来自 `--agent`；
-- 多 agent 需求：每个 agent 一个进程/端口（身份不走 HTTP 头，避免信任问题）；
+- 客户端以 streamable HTTP 连接 `http://127.0.0.1:8080/mcp`（多 agent 时为 `/<agent>/mcp`）；
+- 单 agent 模式一个网关进程可同时服务多个客户端连接；`--agent all` 则服务策略内全部 agent（上游连接共享，授权按 agent 隔离）；
 - localhost 绑定自动启用 DNS rebinding 防护。
 
 ### 4.1.2 审批签名（V1.1，可选加固）
@@ -105,6 +106,39 @@ export AGENTGATE_APPROVAL_SECRET="<随机长随机串>"   # 网关与审批终�
 ```
 
 设置后，`agentgate approve` 的裁决自动附 HMAC 签名，网关验签后才生效；未签名或伪造的裁决文件一律按拒绝处理并审计 `approval_signature_invalid`。密钥只从环境变量读取，不要写进策略文件或脚本。
+
+### 4.1.3 策略热更新（V1.2，默认开启）
+
+修改策略文件保存后约 2 秒内自动生效（决策规则、默认值、args_match）；非法新策略会保留旧策略并审计 `policy_reload_failed`。`agents:`/`servers:` 集合变更仍需重启。`--no-watch` 可关闭。
+
+### 4.1.4 Web 审批台（V1.2）
+
+```bash
+agentgate ui --state-dir .agentgate --port 8756    # 默认 http://127.0.0.1:8756/
+```
+
+浏览器中直接批准/拒绝待审请求、撤销委托、查看审计尾部（5 秒自动刷新）。与 CLI 走完全相同的裁决路径（one-vote + HMAC 签名），审批人记录为 `web:<名字>`。默认只绑定本机回环地址。
+
+### 4.1.5 外部策略后端（OPA，V1.2，可选）
+
+```yaml
+policy_backend_url: "http://127.0.0.1:8181/v1/data/agentgate/decision"
+```
+
+配置后：本地显式规则仍然优先；落到默认值（无规则命中/无该 agent 段）时向该端点 POST `{"input": {agent, server, tool, arguments}}`，返回 `{"result": {"decision": "allow|deny|ask"}}`（或顶层 `decision` 字段）。后端任何故障一律按 deny 处理（fail-closed）。
+
+### 4.1.6 HTTP 上游凭据（V1.2）
+
+```yaml
+servers:
+  remote:
+    transport: http
+    url: "https://internal.example.com/mcp"
+    headers:
+      Authorization: "Bearer ${MY_TOKEN_ENV}"   # 启动时从环境变量解析
+```
+
+`${VAR}` 在加载期解析，变量缺失直接拒绝启动（凭据永不写入策略文件）。env 值同样支持 `${VAR}`。
 
 ### 4.2 Claude Code 接入
 
@@ -147,7 +181,7 @@ agentgate revoke <id>       # 即时撤销
 agentgate log -n 50         # 最近 50 条
 ```
 
-事件类型：`gateway_start/stop`、`call`（allow/grant/ask_allowed 代理前后各一条）、`call_denied`、`approval_requested`、`ask_denied`、`grant_created`、`upstream_error`、`policy_error`。
+事件类型：`gateway_start/stop`、`call`（allow/grant/ask_allowed 代理前后各一条）、`call_denied`、`approval_requested`、`ask_denied`、`grant_created`、`upstream_error`、`policy_error`、`policy_reloaded/policy_reload_failed`（V1.2 热更新）、`prompt_call/prompt_denied/resource_call/resource_denied`（V1.1）、`approval_signature_invalid`（V1.1）。审计文件超 10MB 自动轮转为 `audit-<时间戳>.jsonl`，历史保留。
 
 设计取舍：审计记录**参数哈希**（canonical JSON）而非完整参数；完整参数仅出现在 pending 审批文件里供人审阅。事故复盘：`call` 的 `arguments_hash` 与 `grant` 的绑定哈希同构，可精确对账"哪次调用、哪条规则、谁批的"。
 
@@ -155,13 +189,13 @@ agentgate log -n 50         # 最近 50 条
 
 | 局限 | 说明 | 规划 |
 |---|---|---|
-| HTTP 入口单 agent | 一个 HTTP 网关进程服务一个 agent 身份（多连接可共享） | 多 agent 路由 |
+| HTTP 入口（单 agent） | `--http` 单 agent 多连接；多 agent 用 `--agent all`（每 agent 独立命名空间 `/<agent>/mcp`，共享上游连接） | —（已实现多 agent） |
 | prompts/resources 无 ask | 能力开关只有 allow/deny（只读列举不走人工审批） | 按需扩展 |
 | prompts/resources 仅透传 | prompt 参数不做 args_match 级过滤 | 按需扩展 |
-| HTTP 上游不支持 headers | 配置了会拒绝加载（fail at load） | EX-6 密钥出口 |
-| grants.json 单写者 | 运行期由网关独占写；CLI 并发 revoke 有竞态；文件损坏自动清空（更严格方向） | V1.2 |
-| 策略不热更新 | 改策略需重启网关 | 路线图外 |
-| 审计文件未轮转 | 长期运行需自行 logrotate | V1.2 |
+| 热更新边界 | agents/servers 集合变更需重启；决策规则/默认值/args_match 即时生效 | — |
+| grants.json 单写者 | 运行期由网关独占写；CLI/控制台并发 revoke 有竞态；文件损坏自动清空（更严格方向） | V1.3 |
+| 策略不热更新 | 已实现（默认开启，`--no-watch` 关闭）；仅 agents/servers 集合需重启 | — |
+| Web 控制台无认证 | 默认绑定 127.0.0.1，暴露到网络需自备反向代理认证 | V1.3 |
 
 ## 8. 排障
 
