@@ -89,7 +89,11 @@ class ApprovalManager:
         arguments: dict[str, Any] | None,
         rule: str,
         delegation: dict[str, Any] | None = None,
+        arguments_hash: str | None = None,
     ) -> dict[str, Any]:
+        # arguments here are the DISPLAY copy (possibly redacted by policy);
+        # arguments_hash must be computed from the real arguments by the caller
+        # so grant binding (tool+args) still matches the original call
         request = {
             "id": uuid.uuid4().hex[:12],
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -97,7 +101,7 @@ class ApprovalManager:
             "server": server,
             "tool": f"{server}--{tool}",
             "arguments": arguments or {},
-            "arguments_hash": canonical_args(arguments),
+            "arguments_hash": arguments_hash or canonical_args(arguments),
             "rule": rule,
             "delegation": delegation,
         }

@@ -156,6 +156,13 @@ class Gateway:
             self._tools_cache = (_time.monotonic(), result)
         return result
 
+    def _server_policy(self, server: str):
+        return self.config.agents.get(self.agent, AgentPolicy()).servers.get(server)
+
+    def _redact(self, server: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        spol = self._server_policy(server)
+        return spol.redact_arguments(arguments) if spol else arguments
+
     async def _call_tool(self, ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
         name = params.name
         arguments = dict(params.arguments or {})
@@ -201,7 +208,7 @@ class Gateway:
             rule=decision.rule,
         )
         if self.config.audit_arguments:  # H1: opt-in debug aid (default: hash only)
-            base["arguments"] = arguments
+            base["arguments"] = self._redact(server, arguments)
 
         # F3: rate limit gates calls the policy would let through (allow/grant/ask);
         # explicit denies are unaffected. Fail-closed on exceed.
@@ -289,12 +296,14 @@ class Gateway:
             else None
         )
         request = self.approvals.create_request(
-            self.agent, server, tool, arguments, decision.rule, delegation
+            self.agent, server, tool, self._redact(server, arguments),
+            decision.rule, delegation,
+            arguments_hash=canonical_args(arguments),
         )
         self.audit.append("approval_requested", request_id=request["id"], **base)
         print(
             f"\n[agentgate] APPROVAL NEEDED id={request['id']} agent={self.agent} "
-            f"tool={full_name}\n[agentgate]   arguments: {canonical_args(arguments)}\n"
+            f"tool={full_name}\n[agentgate]   arguments: {canonical_args(self._redact(server, arguments))}\n"
             f"[agentgate]   rule: {decision.rule}\n"
             f"[agentgate]   approve with: agentgate approve {request['id']} --allow\n"
             f"[agentgate]   waiting up to {self.config.ask_timeout_seconds}s ...\n",
@@ -614,7 +623,7 @@ class Gateway:
 
 async def serve(config: Config, agent: str, state_dir: str | None = None,
                 http: str | None = None, config_path: str | None = None,
-                watch_policy: bool = True) -> None:
+                watch_policy: bool = True, trust_agent_header: bool = False) -> None:
     from pathlib import Path
 
     state = Path(state_dir) if state_dir is not None else config.state_dir
@@ -624,8 +633,11 @@ async def serve(config: Config, agent: str, state_dir: str | None = None,
         if not host or not port.isdigit():
             raise ValueError(f"--http expects HOST:PORT, got {http!r}")
         await serve_multi_http(config, state_dir, host, int(port),
-                               config_path=config_path, watch_policy=watch_policy)
+                               config_path=config_path, watch_policy=watch_policy,
+                               trust_agent_header=trust_agent_header)
         return
+    if trust_agent_header:
+        raise ValueError("--trust-agent-header requires --agent all together with --http")
     if agent.lower() == "all":
         raise ValueError("--agent all is only valid together with --http")
     audit = AuditLog(state / "audit.jsonl")
@@ -649,12 +661,48 @@ async def serve(config: Config, agent: str, state_dir: str | None = None,
 
 def serve_sync(config: Config, agent: str, state_dir: str | None = None,
                http: str | None = None, config_path: str | None = None,
-               watch_policy: bool = True) -> None:
-    asyncio.run(serve(config, agent, state_dir, http, config_path, watch_policy))
+               watch_policy: bool = True, trust_agent_header: bool = False) -> None:
+    asyncio.run(serve(config, agent, state_dir, http, config_path, watch_policy,
+                      trust_agent_header))
+
+
+class AgentHeaderRouter:
+    """I2 (v0.5): route one /mcp endpoint to per-agent upstreams by the
+    X-Agentgate-Agent request header. Fail-closed: a missing or unknown
+    identity is rejected - there is no default agent on this path."""
+
+    HEADER = "x-agentgate-agent"
+
+    def __init__(self, apps: dict[str, Any]) -> None:
+        self.apps = apps  # agent -> StreamableHTTPASGIApp
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self._respond(send, 404, "not found")
+            return
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                   for k, v in scope.get("headers", [])}
+        agent = headers.get(self.HEADER, "").strip()
+        app = self.apps.get(agent)
+        if app is None:
+            await self._respond(
+                send, 401,
+                f"agentgate: missing or unknown {self.HEADER} header "
+                f"(known: {', '.join(sorted(self.apps))})",)
+            return
+        await app(scope, receive, send)
+
+    async def _respond(self, send, status: int, text: str) -> None:
+        body = text.encode("utf-8")
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8"),
+                                (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
 
 
 async def serve_multi_http(config: Config, state_dir: str | None, host: str, port: int,
-                           config_path: str | None = None, watch_policy: bool = True) -> None:
+                           config_path: str | None = None, watch_policy: bool = True,
+                           trust_agent_header: bool = False) -> None:
     """V1.2: one HTTP process serving every agent in the policy.
 
     Each agent gets its own Gateway (own upstream connections, own namespace)
@@ -740,6 +788,13 @@ async def serve_multi_http(config: Config, state_dir: str | None, host: str, por
                         methods=["GET", "POST", "DELETE"])
                   for agent, _, manager in units]
         routes += [Route("/healthz", _healthz), Route("/status", _status)]
+        if trust_agent_header:
+            # I2: one endpoint for all agents; identity comes per-request from
+            # the X-Agentgate-Agent header (fail-closed on missing/unknown)
+            header_apps = {agent: StreamableHTTPASGIApp(manager)
+                           for agent, _, manager in units}
+            routes.append(Route("/mcp", AgentHeaderRouter(header_apps),
+                                methods=["GET", "POST", "DELETE"]))
         app = Starlette(routes=routes, lifespan=_lifespan)
 
         watcher = None

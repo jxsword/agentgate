@@ -38,6 +38,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import fnmatch
+
 import yaml
 
 ALLOW = "allow"
@@ -122,6 +124,20 @@ class ServerPolicy:
     resources: str = DENY
     # v0.3 (F3): None = unlimited
     rate_limit: RateLimit | None = None
+    # v0.5 (I3): arg-key globs whose values are masked in pending display and
+    # audit_arguments output (hashes/grant binding always use the real values)
+    redact: list[str] = field(default_factory=list)
+
+    def redact_arguments(self, arguments: dict) -> dict:
+        out = {}
+        for key, value in (arguments or {}).items():
+            if any(fnmatch.fnmatchcase(key, pat) for pat in self.redact):
+                out[key] = "***"
+            elif isinstance(value, dict):
+                out[key] = self.redact_arguments(value)
+            else:
+                out[key] = value
+        return out
 
     def __post_init__(self) -> None:
         if self.default not in DECISIONS:
@@ -237,6 +253,7 @@ def _parse_server_policy(server: str, raw: object) -> ServerPolicy:
         prompts=str(raw.get("prompts", DENY)),
         resources=str(raw.get("resources", DENY)),
         rate_limit=rate_limit,
+        redact=[str(p) for p in (raw.get("redact") or [])],
     )
 
 

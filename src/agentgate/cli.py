@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,7 +42,8 @@ def cmd_run(args) -> int:
         stream=sys.stderr,
     )
     serve_sync(config, agent=args.agent, state_dir=args.state_dir, http=args.http,
-               config_path=args.config, watch_policy=not args.no_watch)
+               config_path=args.config, watch_policy=not args.no_watch,
+               trust_agent_header=args.trust_agent_header)
     return 0
 
 
@@ -82,9 +84,25 @@ def cmd_log(args) -> int:
             if not ok:
                 ok_all = False
         return 0 if ok_all else 1
-    records = log.tail(args.n)
+    # I1 (v0.5): --filter key=value (repeatable) and --grep substring
+    filters: dict[str, str] = {}
+    for f in args.filter or []:
+        if "=" not in f:
+            print(f"agentgate: --filter expects key=value, got {f!r}", file=sys.stderr)
+            return 2
+        k, v = f.split("=", 1)
+        filters[k] = v
+    records = log.tail(100_000)  # full file scan; tail caps memory
+    matches = 0
     for r in records:
+        if args.grep and args.grep.lower() not in json.dumps(r, ensure_ascii=False).lower():
+            continue
+        if any(str(r.get(k)) != v for k, v in filters.items()):
+            continue
         print(json.dumps(r, ensure_ascii=False))
+        matches += 1
+        if matches >= args.n:
+            break
     return 0
 
 
@@ -298,6 +316,24 @@ def cmd_validate(args) -> int:
     return 0
 
 
+def cmd_demo(args) -> int:
+    """I4 (v0.5): one-command demo - gateway + demo upstream + scripted client."""
+    root = Path(__file__).resolve().parents[2]
+    client = (root / "examples" / "demo_client.py").resolve()
+    # strict allowlist: only the bundled demo client, located inside the project root
+    if client.parent != (root / "examples").resolve() or not client.exists():
+        print("agentgate demo: examples/demo_client.py not found - run from a source checkout",
+              file=sys.stderr)
+        return 2
+    completed = subprocess.run([sys.executable, str(client), "--yes"],
+                               cwd=str(root), shell=False)
+    print("\nNext steps:")
+    print("  agentgate run --config policies/example.yaml --agent claude-code   # terminal 1")
+    print("  agentgate ui                                                        # terminal 2 (browser)")
+    print("  agentgate report --state-dir .agentgate                             # after some calls")
+    return completed.returncode
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -318,6 +354,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="serve streamable HTTP instead of stdio (EX-1)")
     p_run.add_argument("--no-watch", action="store_true",
                        help="disable policy hot-reload (default: reload on file change)")
+    p_run.add_argument("--trust-agent-header", action="store_true",
+                       help="with '--agent all --http': route /mcp by the "
+                            "X-Agentgate-Agent request header (fail-closed)")
     p_run.set_defaults(func=cmd_run)
 
     p_pending = sub.add_parser("pending", help="list pending approval requests")
@@ -338,6 +377,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("-n", type=int, default=20)
     p_log.add_argument("--verify", action="store_true",
                        help="verify the tamper-evident hash chain of all audit files")
+    p_log.add_argument("--filter", action="append", metavar="KEY=VALUE",
+                       help="only records where rec[key] == value (repeatable)")
+    p_log.add_argument("--grep", help="substring match on the serialized record")
     p_log.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_log.set_defaults(func=cmd_log)
 
@@ -376,6 +418,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--since", help="only decisions after this ISO 8601 timestamp")
     p_report.add_argument("--format", choices=["table", "json", "csv"], default="table")
     p_report.set_defaults(func=cmd_report)
+
+    p_demo = sub.add_parser("demo", help="one-command demo (gateway + demo upstream + scripted client)")
+    p_demo.set_defaults(func=cmd_demo)
 
     return parser
 
