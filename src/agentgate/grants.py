@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .locking import exclusive_lock
 from .policy import Grant, canonical_args
 
 
@@ -67,35 +68,43 @@ class GrantStore:
         bind: str = "tool",
         approver: str = "human",
     ) -> Grant:
-        now = time.time()
-        grant = Grant(
-            id=uuid.uuid4().hex[:12],
-            agent=agent,
-            server=server,
-            tool=tool,
-            args_hash=canonical_args(arguments) if bind == "tool+args" else None,
-            created_at=now,
-            expires_at=now + ttl_seconds,
-            approver=approver,
-        )
-        self._grants.append(grant)
-        self._save()
+        # F5: lock -> reload -> mutate -> atomic save, so gateway and CLI writes
+        # cannot lose each other's updates (read-modify-write race)
+        with exclusive_lock(self.path):
+            self._load()
+            now = time.time()
+            grant = Grant(
+                id=uuid.uuid4().hex[:12],
+                agent=agent,
+                server=server,
+                tool=tool,
+                args_hash=canonical_args(arguments) if bind == "tool+args" else None,
+                created_at=now,
+                expires_at=now + ttl_seconds,
+                approver=approver,
+            )
+            self._grants.append(grant)
+            self._save()
         return grant
 
     def match(self, agent: str, server: str, tool: str, arguments: dict[str, Any] | None) -> Grant | None:
+        self._load()  # atomic replace makes lock-free reads consistent
         for grant in reversed(self._grants):
             if grant.matches(agent, server, tool, arguments):
                 return grant
         return None
 
     def revoke(self, grant_id: str) -> bool:
-        before = len(self._grants)
-        self._grants = [g for g in self._grants if g.id != grant_id]
-        changed = len(self._grants) != before
-        if changed:
-            self._save()
+        with exclusive_lock(self.path):
+            self._load()
+            before = len(self._grants)
+            self._grants = [g for g in self._grants if g.id != grant_id]
+            changed = len(self._grants) != before
+            if changed:
+                self._save()
         return changed
 
     def list(self, include_expired: bool = False) -> list[Grant]:
+        self._load()
         now = time.time()
         return [g for g in self._grants if include_expired or g.active(now)]
