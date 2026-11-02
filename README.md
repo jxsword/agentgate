@@ -8,10 +8,11 @@
 
 ```mermaid
 graph LR
-    CC[Claude Code / Cursor / 任意 MCP 客户端] -->|stdio| G["agentgate<br/>策略: allow / deny / ask"]
-    G -->|allow| U1[上游 MCP 服务器]
-    G -->|ask→人工批准| H[你在另一个终端: agentgate approve]
-    G -.->|deny, 审计留痕| U2[（不执行）]
+    CC["MCP 客户端（Claude Code / Cursor）"] -->|stdio / --http| G["agentgate 网关<br/>策略: allow / deny / ask + 限流 + 超时"]
+    G -->|"allow → 代理"| U[上游 MCP 服务器 ×N]
+    G -->|"ask → 人工"| H["审批：CLI / Web 控制台<br/>（可签发限时范围委托）"]
+    G -->|deny + 审计留痕| X[（不执行）]
+    G -.->|audit.jsonl 哈希链| A["agentgate log --verify / report"]
 ```
 
 ## 30 秒上手
