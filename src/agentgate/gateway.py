@@ -21,9 +21,10 @@ from mcp.server.stdio import stdio_server
 
 from .approvals import ApprovalManager, approval_secret, verify_decision
 from .audit import AuditLog
-from .config import Config
+from .config import AgentPolicy, Config
 from .grants import GrantStore
 from .policy import Decision, PolicyEngine, canonical_args
+from .ratelimit import RateLimiter
 from .upstream import Upstream
 
 NS_SEP = "--"
@@ -62,6 +63,8 @@ class Gateway:
         self.config_path = config_path
         self.watch_policy = watch_policy
         self.upstreams: dict[str, Upstream] = {}
+        self.rate_limiter = RateLimiter()
+        self.rate_limiter.bind(lambda a, s: self.config.agents.get(a, AgentPolicy()).servers.get(s))
 
     def _reload_policy_once(self, path, last_mtime) -> float | None:
         """One hot-reload step; returns the mtime to remember (None on stat error)."""
@@ -180,6 +183,21 @@ class Gateway:
             arguments_hash=canonical_args(arguments),
             rule=decision.rule,
         )
+
+        # F3: rate limit gates calls the policy would let through (allow/grant/ask);
+        # explicit denies are unaffected. Fail-closed on exceed.
+        if decision.action in ("allow", "grant", "ask"):
+            limiter_result = self.rate_limiter.check_and_record(self.agent, server)
+            if limiter_result.limited:
+                self.audit.append(
+                    "rate_limited", decision="deny", retry_after=limiter_result.retry_after,
+                    limit=limiter_result.limit, **base,
+                )
+                return error_result(
+                    f"agentgate: rate limit reached for {self.agent}@{server} "
+                    f"({limiter_result.limit} calls/window). Retry after "
+                    f"{limiter_result.retry_after}s (fail-closed)."
+                )
 
         if decision.action in ("allow", "grant"):
             return await self._proxy(server, tool, arguments, decision, base, decision.action)

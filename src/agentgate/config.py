@@ -97,6 +97,20 @@ class ToolRule:
 
 
 @dataclass
+class RateLimit:
+    """v0.3 (F3): sliding-window call limit per (agent, server)."""
+
+    calls: int
+    window_seconds: int
+
+    def __post_init__(self) -> None:
+        if self.calls <= 0:
+            raise ConfigError("rate_limit.calls must be > 0")
+        if self.window_seconds <= 0:
+            raise ConfigError("rate_limit.window_seconds must be > 0")
+
+
+@dataclass
 class ServerPolicy:
     """Per-agent policy for one upstream server."""
 
@@ -106,6 +120,8 @@ class ServerPolicy:
     # read-only listing is deliberately out of scope; default deny keeps fail-closed
     prompts: str = DENY
     resources: str = DENY
+    # v0.3 (F3): None = unlimited
+    rate_limit: RateLimit | None = None
 
     def __post_init__(self) -> None:
         if self.default not in DECISIONS:
@@ -204,11 +220,18 @@ def _parse_server_policy(server: str, raw: object) -> ServerPolicy:
         raise ConfigError(f"agents.*.servers.{server}.tools: expected mapping")
     for pattern, rule in tools.items():
         rules.append(_parse_tool_rule(server, str(pattern), rule))
+    rate_limit = None
+    if raw.get("rate_limit"):
+        rl = raw["rate_limit"] or {}
+        if not isinstance(rl, dict) or "calls" not in rl or "window_seconds" not in rl:
+            raise ConfigError(f"agents.*.servers.{server}.rate_limit needs calls + window_seconds")
+        rate_limit = RateLimit(calls=int(rl["calls"]), window_seconds=int(rl["window_seconds"]))
     return ServerPolicy(
         default=str(raw.get("default", DENY)),
         rules=rules,
         prompts=str(raw.get("prompts", DENY)),
         resources=str(raw.get("resources", DENY)),
+        rate_limit=rate_limit,
     )
 
 
