@@ -54,6 +54,9 @@ agentgate revoke <grant_id>       # 即时撤销
 - **打包**（v0.3）：非 root Dockerfile + compose 示例 + GitHub Actions 3 平台矩阵 + 策略 JSON Schema
 - **审计防篡改**（v0.4）：哈希链 + `agentgate log --verify`，取证级日志完整性
 - **validate/healthz/status**（v0.4）：策略校验命令、HTTP 运维探针、审批拒绝理由回传、tools/list 缓存、systemd 样例
+- **按请求身份路由**（v0.5）：`--trust-agent-header` 单端口多 agent（fail-closed 401）
+- **参数脱敏**（v0.5）：server 策略 `redact`，审批展示/审计打码，委托绑定不受影响
+- **审计查询与一键演示**（v0.5）：`log --filter/--grep`、`agentgate demo`、`scripts/bench.py`
 
 ## 文档
 

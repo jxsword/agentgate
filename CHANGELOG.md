@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (2026-11-03)
+
+多租户与审计体验（SRS §3.10）：
+
+- **按请求身份路由**：`--agent all --http --trust-agent-header`——单一 `/mcp` 端点按 `X-Agentgate-Agent` 请求头路由到对应 agent 的策略与上游；缺失/未知身份 401（fail-closed）
+- **参数脱敏**：server 策略 `redact: [键名 glob]`——审批展示、stderr 提示与 `audit_arguments` 输出打码；`arguments_hash` 与 `tool+args` 委托绑定始终使用真实参数
+- **审计查询**：`agentgate log --filter key=value --grep text`
+- **`agentgate demo`**：一条命令跑通端到端演示（allowlist 防护）
+- **基准脚本**：`scripts/bench.py` 输出 tools/call 延迟百分位（本机 p50 8.5ms / p95 10.2ms，含上游往返）
+
 ## 0.4.0 (2026-11-03)
 
 加固与运维（SRS §3.9）：

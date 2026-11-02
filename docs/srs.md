@@ -230,6 +230,24 @@ deploy/ 提供 gateway（多 agent HTTP）与 console 单元样例，含加固�
 #### FR-OPS-004 PyPI 发布流水线 P3 V0.4
 `.github/workflows/publish.yml`：`v*` tag 触发构建并经 PyPI trusted publishing 发布。
 
+### 3.10 模块：V0.5 增量需求（多租户与审计体验）
+
+#### FR-GW-015 按请求身份路由 P1 V0.5
+`--agent all --http --trust-agent-header`：`/mcp` 端点按 `X-Agentgate-Agent` 头路由至对应 agent（各自策略与共享上游）；头缺失或未知一律 401（fail-closed，无默认 agent）。未启用时保持 `/<agent>/mcp` 路径路由。
+
+#### FR-PL-008 参数脱敏 P1 V0.5
+server 策略 `redact: [键名 glob]`：审批展示（pending 文件、stderr 提示）与 `audit_arguments` 输出中命中键的值打码为 `***`（仅顶层键，嵌套不递归——已在测试中明示）；`arguments_hash` 与 `tool+args` 委托绑定使用真实参数，安全语义不受脱敏影响。
+
+#### FR-AU-008 审计查询 P2 V0.5
+`agentgate log --filter key=value`（可重复）与 `--grep`：审计记录的键值/子串过滤查询。
+
+#### FR-CLI-010 一键演示 P3 V0.5
+`agentgate demo`：运行捆绑演示（gateway+上游+脚本化客户端），路径白名单防护。
+
+#### FR-OPS-005 基准脚本 P3 V0.5
+`scripts/bench.py`：tools/call 全链路延迟百分位（min/p50/p95/p99/max）。
+
+
 ### 3.5 模块：CLI（CLI）
 
 #### FR-CLI-001 run P0 V1.0

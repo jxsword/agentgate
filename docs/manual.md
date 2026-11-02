@@ -213,6 +213,17 @@ agentgate log --verify        # 校验全部审计文件（含轮转文件）
 - `deploy/*.service`：systemd 部署样例（含加固项）
 - 网关启动自动清理超过 ask-timeout 的遗留审批文件
 
+### 4.1.15 v0.5 快捷项
+
+- **按请求身份路由**：`agentgate run --config p.yaml --agent all --http 0.0.0.0:8080 --trust-agent-header`
+  → 客户端在 streamable HTTP 请求头带 `X-Agentgate-Agent: <agent>`；缺失/未知身份 401（fail-closed）。
+  适合多客户端共享单端口、各自身份隔离的场景。
+- **参数脱敏**：server 策略 `redact: ["password", "api_*", "token"]`——审批展示与
+  `audit_arguments` 审计输出打码为 `***`；哈希与 `tool+args` 委托绑定不受影响（安全语义不变）。
+- **审计查询**：`agentgate log --filter event=call_denied --filter agent=bot`、`--grep sandbox`
+- **一键演示**：`agentgate demo`（自动跑通 allow→审批→grant→deny→prompts/resources 全流程）
+- **基准**：`python scripts/bench.py -n 500`（本机实测 p50≈8.5ms / p95≈10.2ms，含上游往返）
+
 ### 4.1.12 Docker 部署（v0.3）
 
 ```bash
