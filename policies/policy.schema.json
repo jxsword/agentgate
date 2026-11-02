@@ -4,6 +4,7 @@
   "type": "object",
   "required": ["version"],
   "properties": {
+    "extends": {"type": "string", "description": "base policy file to inherit (relative path), merged then overridden"},
     "version": {"const": 1},
     "default_decision": {"enum": ["allow", "deny", "ask"], "default": "deny"},
     "state_dir": {"type": "string"},

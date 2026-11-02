@@ -1,6 +1,8 @@
 # agentgate
 
-**Agent 原生 MCP 授权网关**：每次工具调用逐次鉴权、危险操作人类审批、审批可转为限时范围委托（scoped delegation）、全程追加式审计。
+[![CI](https://github.com/jxsword/agentgate/actions/workflows/ci.yml/badge.svg)](https://github.com/jxsword/agentgate/actions/workflows/ci.yml)
+
+**Agent 原生 MCP 授权网关**：每次工具调用逐次鉴权、危险操作人类审批、审批可转为限时范围委托（scoped delegation）、全程追加式审计（哈希链防篡改）。
 
 对标 Permit.io MCP Gateway / Auth0 for GenAI 的**开源自托管替代**。选型依据见仓库上层 `research/调研报告_agent项目选型.md`（方向 C1：商业三家闭源验证需求，开源空白）。
 

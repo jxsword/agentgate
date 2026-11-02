@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 (2026-11-03)
+
+组合与洞察（SRS §3.11）+ GitHub 工程化：
+
+- **策略组合** `extends: base.yaml`：递归深合并（dict 逐键、标量/列表覆盖）、循环检测、相对路径解析——多环境策略不再复制粘贴
+- **委托用量视图** `agentgate report --grants`：审计 grant_id 与 grants.json 关联——每个委托的使用次数、状态、审批人，并标记"已不在册"的引用（table/json）
+- **委托详情** `agentgate grants <id>`：范围、参数绑定、创建/过期时间、审批人
+- **GitHub 工程化**：私有仓库 + Actions 3 平台矩阵调试（修复 anyio 跨任务 cancel scope 的 http e2e 模式、裁剪矩阵节约私有额度、.gitattributes 行尾规范、README CI 徽章）
+- **杂项**：JSON Schema 补 `extends`；pytest-asyncio loop-scope 告警清理；示例策略内联 redact/rate_limit 注释
+
 ## 0.5.1 (2026-11-03)
 
 - **控制台会话认证**：`/login` 表单换签 HttpOnly + SameSite=strict 会话 cookie（8h），浏览器免每次 URL token；`/logout` 注销；未认证访问 `/` 重定向登录页（API 路径仍 401）

@@ -143,38 +143,35 @@ async def test_http_gateway(workdir):
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
     )
     try:
+        from mcp.client.streamable_http import streamable_http_client
+        from contextlib import asynccontextmanager
+
         url = f"http://127.0.0.1:{port}/mcp"
 
-        async def connect():
-            """Open http+session contexts with same-task symmetric cleanup on failure."""
-            http_cm = streamable_http_client(url)
-            read, write = await http_cm.__aenter__()
-            try:
-                sess_cm = ClientSession(read, write)
-                await sess_cm.__aenter__()
-            except BaseException:
-                await http_cm.__aexit__(*sys.exc_info())
-                raise
-            try:
-                await sess_cm.initialize()
-            except BaseException:
-                await sess_cm.__aexit__(*sys.exc_info())
-                await http_cm.__aexit__(*sys.exc_info())
-                raise
-            return http_cm, sess_cm
+        @asynccontextmanager
+        async def open_http_session():
+            # plain `async with` blocks (like tests/test_e2e.py stdio pattern):
+            # enter and exit stay in one task, which keeps anyio cancel scopes
+            # happy even when a retry attempt fails mid-connect
+            deadline = time.monotonic() + 20
+            last = None
+            connected = False
+            while not connected and time.monotonic() < deadline:
+                try:
+                    async with streamable_http_client(url) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            connected = True
+                            yield session
+                except Exception as e:  # noqa: BLE001
+                    if connected:
+                        raise  # session worked; failure is in the test body
+                    last = e
+                    await asyncio.sleep(0.4)
+            if not connected:
+                raise RuntimeError(f"could not connect to http gateway: {last}")
 
-        deadline = time.monotonic() + 20
-        last_err = None
-        http_cm = sess_cm = None
-        while time.monotonic() < deadline and http_cm is None:
-            try:
-                http_cm, sess_cm = await connect()
-            except Exception as e:  # noqa: BLE001 - retry until uvicorn is up
-                last_err = e
-                await asyncio.sleep(0.4)
-        assert http_cm is not None, f"could not connect to http gateway: {last_err}"
-        try:
-            session = sess_cm
+        async with open_http_session() as session:
             tools = await session.list_tools()
             assert "demo--echo" in [t.name for t in tools.tools]
             res = await session.call_tool("demo--echo", {"text": "over-http"})
@@ -182,9 +179,6 @@ async def test_http_gateway(workdir):
             assert "echo: over-http" in res.content[0].text
             res = await session.call_tool("demo--delete_file", {"path": "x"})
             assert res.is_error and "denied by policy" in res.content[0].text
-        finally:
-            await sess_cm.__aexit__(None, None, None)
-            await http_cm.__aexit__(None, None, None)
     finally:
         proc.terminate()
         proc.wait(timeout=10)

@@ -253,6 +253,21 @@ server 策略 `redact: [键名 glob]`：审批展示（pending 文件、stderr �
 #### FR-AU-009 审计跟随 P3 V0.5.1
 `agentgate log -f`：轮询打印新审计记录（与 --filter/--grep 叠加）；审计轮转后自动从新文件起点继续。
 
+### 3.11 模块：V0.6 增量需求（组合与洞察）
+
+#### FR-PL-009 策略组合 P1 V0.6
+`extends: <相对路径>`：加载基座策略后递归深合并（mapping 逐键合并，标量/列表覆盖，`extends` 键本身不入结果）；相对当前文件解析；循环 extends 报 ConfigError。
+
+#### FR-AU-010 委托用量视图 P2 V0.6
+`agentgate report --grants`：审计 `call`(decision=grant) 的 grant_id 与 grants.json 关联，输出每委托使用次数/状态/审批人/参数绑定标记；不在册 grant 的引用单独计数（table/json）。
+
+#### FR-CLI-012 委托详情 P3 V0.6
+`agentgate grants [id]`：单条委托详情（范围、参数绑定、创建/过期时间、审批人）；未知 id 退出码 1。
+
+#### FR-OPS-006 GitHub 工程化 P2 V0.6
+私有仓库 + Actions 3 平台矩阵；e2e 的 HTTP 上下文以同任务对称进出修复 anyio 跨任务 cancel scope 错误；矩阵裁至每 OS 单 Python 版本节约私有额度；.gitattributes 行尾规范；CI 徽章。
+
+
 
 
 ### 3.5 模块：CLI（CLI）
