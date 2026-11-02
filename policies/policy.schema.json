@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "agentgate policy",
+  "type": "object",
+  "required": ["version"],
+  "properties": {
+    "version": {"const": 1},
+    "default_decision": {"enum": ["allow", "deny", "ask"], "default": "deny"},
+    "state_dir": {"type": "string"},
+    "on_ask": {"enum": ["pending", "deny"], "default": "pending"},
+    "ask_timeout_seconds": {"type": "integer", "minimum": 1},
+    "policy_backend_url": {"type": "string", "format": "uri"},
+    "servers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "transport": {"enum": ["stdio", "http"]},
+          "command": {"type": "string"},
+          "args": {"type": "array", "items": {"type": "string"}},
+          "env": {
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          },
+          "url": {"type": "string", "format": "uri"},
+          "headers": {
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          },
+          "call_timeout_seconds": {"type": "integer", "minimum": 0}
+        },
+        "allOf": [
+          {"if": {"properties": {"transport": {"const": "stdio"}}},
+           "then": {"required": ["command"]}},
+          {"if": {"properties": {"transport": {"const": "http"}}},
+           "then": {"required": ["url"]}}
+        ]
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "servers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "default": {"enum": ["allow", "deny", "ask"]},
+                "prompts": {"enum": ["allow", "deny"]},
+                "resources": {"enum": ["allow", "deny"]},
+                "rate_limit": {
+                  "type": "object",
+                  "required": ["calls", "window_seconds"],
+                  "properties": {
+                    "calls": {"type": "integer", "minimum": 1},
+                    "window_seconds": {"type": "integer", "minimum": 1}
+                  }
+                },
+                "tools": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "oneOf": [
+                      {"enum": ["allow", "deny", "ask"]},
+                      {
+                        "type": "object",
+                        "required": ["decision"],
+                        "properties": {
+                          "decision": {"enum": ["allow", "deny", "ask"]},
+                          "args_match": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"}
+                          },
+                          "delegation": {
+                            "type": "object",
+                            "properties": {
+                              "ttl_seconds": {"type": "integer", "minimum": 1},
+                              "bind": {"enum": ["tool", "tool+args"]}
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

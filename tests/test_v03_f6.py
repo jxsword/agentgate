@@ -79,3 +79,24 @@ def test_report_empty(tmp_path, capsys):
     rc = main(["report", "--state-dir", str(tmp_path / "state")])
     assert rc == 0
     assert "no tool decisions" in capsys.readouterr().out
+
+
+def test_report_csv(tmp_path, capsys):
+    state = str(tmp_path / "state")
+    _seed(tmp_path / "state")
+    rc = main(["report", "--state-dir", state, "--format", "csv"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.startswith("agent,tool,allowed,ask_allowed,denied,denial_rate")
+    assert "bot,write_file,1,1,0,0.0" in out
+
+
+def test_policy_schema_matches_example():
+    """The shipped schema must be valid JSON and the example policy must opt in."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    schema = json.loads((root / "policies" / "policy.schema.json").read_text(encoding="utf-8"))
+    assert schema["properties"]["version"]["const"] == 1
+    example = (root / "policies" / "example.yaml").read_text(encoding="utf-8")
+    assert "policy.schema.json" in example  # yaml-language-server hint present

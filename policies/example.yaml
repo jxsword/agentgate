@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./policy.schema.json
 # agentgate example policy
 # Scope: one agent ("claude-code") talking to one demo upstream ("demo").
 # Fail-closed: anything not matching a rule below falls through to the

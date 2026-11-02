@@ -1,0 +1,35 @@
+# Example: gateway + web console side by side.
+#   docker compose up -d
+# Attach Claude Code to the stdio gateway via: docker compose exec gateway agentgate ...
+# (stdio inside a container suits host-side wrappers; for remote clients prefer
+#  `run --http` exposed through your own TLS proxy.)
+
+services:
+  gateway:
+    build: .
+    image: agentgate:latest
+    command: >
+      run --config /app/policies/example.yaml
+      --agent claude-code --http 0.0.0.0:8080
+    environment:
+      # AGENTGATE_APPROVAL_SECRET: set-me-via-secrets   # optional approval signing
+    volumes:
+      - ./policies:/app/policies:ro
+      - agentgate-state:/app/.agentgate
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  console:
+    image: agentgate:latest
+    command: ui --state-dir /app/.agentgate --host 0.0.0.0 --port 8756
+    environment:
+      AGENTGATE_UI_TOKEN: ${AGENTGATE_UI_TOKEN:?set a console token}
+    volumes:
+      - agentgate-state:/app/.agentgate
+    ports:
+      - "127.0.0.1:8756:8756"
+    restart: unless-stopped
+
+volumes:
+  agentgate-state:

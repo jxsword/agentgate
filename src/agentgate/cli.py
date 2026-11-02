@@ -224,6 +224,15 @@ def cmd_report(args) -> int:
             ],
         }, ensure_ascii=False, indent=2))
         return 0
+    if args.format == "csv":
+        import csv as _csv
+
+        writer = _csv.writer(sys.stdout, lineterminator="\n")
+        writer.writerow(["agent", "tool", "allowed", "ask_allowed", "denied", "denial_rate"])
+        for (agent, tool), c in sorted(rows.items()):
+            writer.writerow([agent, tool, c["allowed"], c["ask_allowed"], c["denied"],
+                             round(c["denied"] / max(sum(c.values()), 1), 3)])
+        return 0
 
     if not rows:
         print("no tool decisions found in audit")
@@ -305,7 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_report = sub.add_parser("report", help="aggregate audit into a per agent/tool decision report")
     p_report.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_report.add_argument("--since", help="only decisions after this ISO 8601 timestamp")
-    p_report.add_argument("--format", choices=["table", "json"], default="table")
+    p_report.add_argument("--format", choices=["table", "json", "csv"], default="table")
     p_report.set_defaults(func=cmd_report)
 
     return parser
