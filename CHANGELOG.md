@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0 (2026-11-03)
+
+可观测与部署（SRS §3.12）+ 复审遗留清零：
+
+- **/metrics Prometheus 端点**（HTTP 模式）：按 agent/server/tool/outcome 的调用计数器 + 上游存活 gauge，text exposition format
+- **审计多写者安全**：轮转文件名带 pid + 冲突计数——两个网关进程共享 state 目录不再互相覆盖历史
+- **孤儿 decision 清扫**：`cleanup_stale` 一并清理超龄 decision 文件（超时边缘批准的残留）
+- **资源探测审计**：`read_resource` 的逐 server 探测失败均留 `resource_probe` 记录
+- **部署指南** `docs/deploy-https.md`：Caddy/nginx 反代形态 + 暴露前安全清单
+- gateway.py 行尾规范化（CI eol=lf 生效）
+
 ## 0.6.0 (2026-11-03)
 
 组合与洞察（SRS §3.11）+ GitHub 工程化：

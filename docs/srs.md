@@ -267,6 +267,24 @@ server 策略 `redact: [键名 glob]`：审批展示（pending 文件、stderr �
 #### FR-OPS-006 GitHub 工程化 P2 V0.6
 私有仓库 + Actions 3 平台矩阵；e2e 的 HTTP 上下文以同任务对称进出修复 anyio 跨任务 cancel scope 错误；矩阵裁至每 OS 单 Python 版本节约私有额度；.gitattributes 行尾规范；CI 徽章。
 
+### 3.12 模块：V0.7 增量需求（可观测与部署）
+
+#### FR-OPS-007 Prometheus 指标端点 P1 V0.7
+HTTP 模式 `/metrics`：`agentgate_tool_calls_total{agent,server,tool,outcome}` 计数器（allowed/denied/rate_limited）与 `agentgate_upstreams_up` gauge；text exposition format。
+
+#### FR-AU-011 审计多写者安全 P2 V0.7
+轮转文件名含 pid 与冲突计数；共享 state 目录的多网关进程不互相覆盖轮转历史。
+
+#### FR-AP-010 孤儿裁决清扫 P3 V0.7
+`cleanup_stale` 同步清扫超龄 decision 文件。
+
+#### FR-AU-012 资源探测审计 P3 V0.7
+`read_resource` 逐 server 探测失败写 `resource_probe`。
+
+#### FR-OPS-008 HTTPS 部署指南 P2 V0.7
+`docs/deploy-https.md`：Caddy/nginx 双形态反代（TLS+认证+头校验）与暴露前清单。
+
+
 
 
 

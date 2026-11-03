@@ -240,6 +240,12 @@ agentgate doctor --config policy.yaml --reach  # 同时探测上游可达性
 
 检查项：Python 版本、mcp/pyyaml 依赖、state 目录可写、**审计哈希链完整性**（含轮转文件）、策略加载；`--reach` 会逐个启动/停止上游验证连通。任何 ✗ 退出码 1——排障第一步先跑它。
 
+### 4.1.18 监控与部署（v0.7）
+
+- **Prometheus**：HTTP 模式抓取 `http://127.0.0.1:8080/metrics`——`agentgate_tool_calls_total{agent,server,tool,outcome}`（allowed/denied/rate_limited）与 `agentgate_upstreams_up`
+- **审计多进程**：轮转文件名带 pid，多网关共享 state 目录不再互相覆盖
+- **HTTPS 暴露**：见 `docs/deploy-https.md`（Caddy/nginx 反代 + 安全清单）
+
 ### 4.1.12 Docker 部署（v0.3）
 
 ```bash
