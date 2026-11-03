@@ -543,6 +543,42 @@ def cmd_doctor(args) -> int:
     return 0 if ok_all else 1
 
 
+def cmd_incident(args) -> int:
+    """T (v0.7): forensics timeline for one delegation grant (or approval request)."""
+    state = _state_dir(args)
+    sources = sorted(state.glob("audit-*.jsonl")) + \
+        ([state / "audit.jsonl"] if (state / "audit.jsonl").exists() else [])
+    hits = []
+    for src in sources:
+        for line in src.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if args.grant_id in (rec.get("grant_id"), rec.get("request_id"), rec.get("id")):
+                hits.append((src.name, rec))
+    if not hits:
+        print(f"no audit records reference {args.grant_id!r}")
+        return 1
+    print(f"timeline for {args.grant_id} ({len(hits)} records, oldest first):\n")
+    for src_name, rec in hits:
+        print(f"[{rec.get('ts')}] {rec.get('event')} ({src_name})")
+        for k in ("agent", "server", "tool", "rule", "decision", "approver", "reason",
+                  "ttl_seconds", "bind", "error"):
+            if rec.get(k) is not None:
+                print(f"    {k}: {rec[k]}")
+        print()
+    # chain integrity of every touched file
+    ok_all = True
+    for src in sources:
+        ok, _, _, msg = AuditLog.verify_file(src)
+        if not ok:
+            ok_all = False
+            print(f"WARNING: audit file {src.name} failed verification: {msg}")
+    print("audit integrity:", "OK" if ok_all else "COMPROMISED (see warnings)")
+    return 0 if ok_all else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -646,6 +682,11 @@ def build_parser() -> argparse.ArgumentParser:
                           help="also probe upstream reachability (starts/stops each)")
     p_doctor.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_incident = sub.add_parser("incident", help="forensics timeline for a grant/request id")
+    p_incident.add_argument("grant_id")
+    p_incident.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    p_incident.set_defaults(func=cmd_incident)
 
     return parser
 
