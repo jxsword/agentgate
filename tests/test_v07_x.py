@@ -54,10 +54,13 @@ async def test_console_shows_grant_uses(tmp_path):
         page = None
         while time.monotonic() < deadline:
             try:
-                page = await _http("GET", base + "/")
-                break
+                resp = await _http("GET", base + "/")
+                if resp.status_code == 200:  # console ready (uvicorn lifespan settled)
+                    page = resp
+                    break
             except Exception:  # noqa: BLE001
-                await asyncio.sleep(0.4)
+                pass
+            await asyncio.sleep(0.4)
         assert page and page.status_code == 200
         body = page.text
         assert g.id in body

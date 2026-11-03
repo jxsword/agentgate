@@ -141,6 +141,10 @@ async def test_agent_header_routing(workdir):
             try:
                 async with httpx2.AsyncClient(timeout=3) as client:
                     r_none = await client.post(f"{base}/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+                    if r_none.status_code == 503:
+                        # session manager lifespan not ready yet - keep polling
+                        await asyncio.sleep(0.4)
+                        continue
                     r_bad = await client.post(f"{base}/mcp", headers={"X-Agentgate-Agent": "ghost"},
                                               json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
                     r_ok = await client.get(f"{base}/mcp", headers={"X-Agentgate-Agent": "bot"})

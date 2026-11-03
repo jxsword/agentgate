@@ -149,10 +149,12 @@ async def test_web_console_flow(tmp_path):
         while time.monotonic() < deadline:
             try:
                 resp = await _http("GET", base + "/")
-                page = resp.text
-                break
+                if resp.status_code == 200:  # console ready (uvicorn lifespan settled)
+                    page = resp.text
+                    break
             except Exception:  # noqa: BLE001
-                await asyncio.sleep(0.4)
+                pass
+            await asyncio.sleep(0.4)
         assert page, "console did not come up"
         assert req["id"] in page and "write_file" in page
         assert "echo@fs--echo" in page or "fs--echo" in page  # grant listed

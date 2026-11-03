@@ -51,10 +51,12 @@ async def test_console_session_login_flow(tmp_path, monkeypatch):
         while time.monotonic() < deadline:
             try:
                 r = await _http("GET", base + "/login")
-                ready = r.status_code == 200
-                break
+                if r.status_code == 200:  # console ready (uvicorn lifespan settled)
+                    ready = True
+                    break
             except Exception:  # noqa: BLE001
-                await asyncio.sleep(0.4)
+                pass
+            await asyncio.sleep(0.4)
         assert ready
 
         # unauthenticated / redirects to /login (browser-friendly)

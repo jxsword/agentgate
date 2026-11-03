@@ -61,13 +61,18 @@ async def test_ui_token_enforced(tmp_path, monkeypatch):
         first = None
         while time.monotonic() < deadline:
             try:
-                first = await _http("GET", base + "/")
-                break
+                resp = await _http("GET", base + "/login")
+                if resp.status_code == 200:  # console ready (uvicorn lifespan settled)
+                    first = resp
+                    break
             except Exception:  # noqa: BLE001
-                await asyncio.sleep(0.4)
-        assert first is not None
+                pass
+            await asyncio.sleep(0.4)
+        assert first is not None and first.status_code == 200
+
         # J1: unauthenticated browser request to / redirects to the login page
-        assert first.status_code == 303
+        unauth = await _http("GET", base + "/")
+        assert unauth.status_code == 303
 
         # wrong token on a POST (non-browser path) -> 401; correct via query -> 200
         wrong = await _http("GET", f"{base}/?token=nope")
