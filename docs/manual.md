@@ -259,6 +259,13 @@ agentgate doctor --config policy.yaml --reach  # 同时探测上游可达性
 - **授权用量告警**：策略加 `grant_usage_alert: 50`——某委托被使用 50 次时审计 `grant_usage_alert` 并打 stderr 警告（进程生命周期计数，重启清零）。
 - **取证**：`agentgate incident <grant_id>`——重建该委托的完整时间线（审批→签发→每次使用→结果）并核验审计链完整性。
 
+### 4.1.20 批量审批与治理检查（v0.7）
+
+- **批量裁决**：`agentgate approve --all --allow|--deny [--approver NAME]`——一键处理全部待审（逐请求走同一 one-vote + 签名路径）；紧急场景优先逐条审。
+- **策略治理**：`agentgate lint --config p.yaml`——语义检查（区别于 validate 的语法检查）：
+  - FAIL：`default_decision != deny`、`"*"` 通配规则（blanket allow）
+  - WARN：`on_ask=deny` 无人值守模式、`default=allow` 无规则、暴露 prompts/resources 无审批门、`rate_limit` 阈值偏宽（>1000/窗口）、delegation 落在 deny 规则上（防御性检查，实际加载期已被拒）
+
 ### 4.1.12 Docker 部署（v0.3）
 
 ```bash

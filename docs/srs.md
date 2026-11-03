@@ -296,6 +296,21 @@ HTTP 模式 `/metrics`：`agentgate_tool_calls_total{agent,server,tool,outcome}`
 #### FR-OPS-009 包构建演练 P3 V0.7
 本地 `python -m build` 验证 sdist+wheel 可产（发布前置）。
 
+#### FR-CLI-014 批量审批 P2 V0.7
+`approve --all --allow|--deny`：对全部待审请求逐一裁决（每请求独立 one-vote + 签名 + 理由，任一失败不影响其余）。
+
+#### FR-CLI-015 策略治理检查 P2 V0.7
+`agentgate lint`：语义级检查——FAIL：非 deny 默认、通配规则；WARN：无人值守模式、宽默认、暴露能力无门、宽松限流、无效 delegation（加载期已拒，防御性）。
+
+#### FR-CLI-016 控制台授权用量列 P3 V0.7
+Web 控制台授权表增加 uses 列（审计 join 计数，与 `report --grants` 同源）。
+
+#### FR-CLI-017 extends 绝对路径 P3 V0.7
+`extends` 支持绝对与相对路径。
+
+#### FR-CLI-018 审计输出排序键 P3 V0.7
+`log --jsonl`（含 follow）输出稳定排序键的 JSONL，便于下游工具消费。
+
 
 
 
