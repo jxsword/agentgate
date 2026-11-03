@@ -13,6 +13,10 @@
 - **授权用量告警**：`grant_usage_alert` 审计事件 + stderr 警告
 - **取证时间线** `agentgate incident <id>`：两跳关联重建委托全生命周期并核验审计链
 - 包构建演练（sdist/wheel 可产）
+- **批量审批** `approve --all`：一键裁决全部待审（逐请求独立）
+- **策略治理检查** `agentgate lint`：FAIL/WARN 两级语义检查（通配规则、非 deny 默认、宽默认、暴露能力、宽松限流、无效 delegation）
+- **控制台用量列**：授权表显示 uses（与 `report --grants` 同源 join）
+- **extends 绝对路径** + `log --jsonl` 稳定排序键输出
 - gateway.py 行尾规范化（CI eol=lf 生效）
 
 ## 0.6.0 (2026-11-03)
