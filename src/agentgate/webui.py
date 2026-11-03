@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import os
 import sys
 from pathlib import Path
@@ -150,9 +151,21 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
         pending = mgr.list_pending()
         grants = fresh_grants()
         active = grants.list()
-        audit_rows = "\n".join(_esc(r) for r in
-                               (state / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-30:]) \
-            if (state / "audit.jsonl").exists() else "(no audit yet)"
+        audit_path = state / "audit.jsonl"
+        audit_lines = audit_path.read_text(encoding="utf-8").splitlines() \
+            if audit_path.exists() else []
+        audit_rows = "\n".join(_esc(r) for r in audit_lines[-30:]) \
+            if audit_lines else "(no audit yet)"
+        # X (v0.7): grant usage counts from the audit (same join report --grants uses)
+        grant_uses: dict[str, int] = {}
+        for line in audit_lines:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            gid = rec.get("grant_id")
+            if rec.get("event") == "call" and rec.get("decision") == "grant" and gid:
+                grant_uses[gid] = grant_uses.get(gid, 0) + 1
         if pending:
             rows = []
             for r in pending:
@@ -187,13 +200,14 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
             grows = "".join(
                 f"<tr><td><code>{_esc(g.id)}</code></td><td>{_esc(g.agent)}@{_esc(g.server)}--{_esc(g.tool)}"
                 f"{' (args-bound)' if g.args_hash else ''}</td>"
+                f"<td>{_esc(grant_uses.get(g.id, 0))}</td>"
                 f"<td>{_esc(_remaining(g))}</td><td>{_esc(g.approver)}</td>"
                 f"<td><form method='post' action='{_action('/revoke/' + str(g.id))}'>"
                 f"<button class='deny'>revoke</button></form></td></tr>"
                 for g in active
             )
-            grants_table = ("<table><tr><th>id</th><th>scope</th><th>expires</th><th>approver</th>"
-                            "<th></th></tr>" + grows + "</table>")
+            grants_table = ("<table><tr><th>id</th><th>scope</th><th>uses</th><th>expires</th>"
+                            "<th>approver</th><th></th></tr>" + grows + "</table>")
         else:
             grants_table = "<p class='muted'>no active grants</p>"
 
