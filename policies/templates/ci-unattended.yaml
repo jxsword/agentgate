@@ -1,0 +1,43 @@
+# agentgate template: CI / UNATTENDED
+# For pipelines: no human is present, so `ask` fails closed. Explicit allowlist
+# only; anything unmapped is denied. Combine with per-tool rate limits.
+#
+# yaml-language-server: $schema=../policy.schema.json
+
+version: 1
+default_decision: deny
+on_ask: deny                # unattended: ask would block forever, fail closed instead
+ask_timeout_seconds: 60
+state_dir: .agentgate
+
+servers:
+  my-tools:
+    transport: stdio
+    command: python
+    args: ["-m", "my_server"]
+    call_timeout_seconds: 60
+
+agents:
+  ci-bot:
+    servers:
+      my-tools:
+        default: deny
+        rate_limit: {calls: 200, window_seconds: 60}
+        tools:
+          "test_*": allow
+          "build_*": allow
+          "read_*": allow
+          "lint": allow
+          "deploy_*":
+            decision: allow
+            args_match:
+              env: "staging"          # deploys only to staging, never prod
+          "delete_*": deny
+
+tests:
+  - {server: my-tools, tool: test_all, expect: allow}
+  - {server: my-tools, tool: lint, expect: allow}
+  - {server: my-tools, tool: deploy_site, arguments: {env: "staging"}, expect: allow}
+  - {server: my-tools, tool: deploy_site, arguments: {env: "production"}, expect: deny}
+  - {server: my-tools, tool: unknown_tool, expect: deny}
+  - {server: my-tools, tool: delete_db, expect: deny}

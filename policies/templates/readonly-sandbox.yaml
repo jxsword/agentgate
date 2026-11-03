@@ -1,0 +1,47 @@
+# agentgate template: READ-ONLY SANDBOX
+# Safe starting point: read-only tools are allowed, everything else needs a human.
+# Copy to your project, adjust tool globs and the sandbox path, then:
+#   agentgate validate --config this-file && agentgate lint --config this-file
+#   agentgate check --config this-file --agent <your-agent> --selftest
+#
+# yaml-language-server: $schema=../policy.schema.json
+
+version: 1
+default_decision: deny
+on_ask: pending
+ask_timeout_seconds: 300
+state_dir: .agentgate
+
+servers:
+  my-tools:
+    transport: stdio
+    command: python            # CHANGE: your upstream MCP server
+    args: ["-m", "my_server"]  # CHANGE
+    # env:                     # secrets via env refs only, e.g. MY_TOKEN: ${MY_TOKEN}
+
+agents:
+  claude-code:                 # CHANGE: your agent identity (--agent flag)
+    servers:
+      my-tools:
+        default: ask
+        tools:
+          "list_*": allow
+          "get_*": allow
+          "read_*": allow
+          "search_*": allow
+          "write_*":
+            decision: ask
+            args_match:
+              path: "*sandbox*"          # only inside the sandbox path
+            delegation:
+              ttl_seconds: 600           # approve once -> 10 min of identical calls
+              bind: tool+args
+          "delete_*": deny
+          "exec_*": deny
+
+tests:                          # embedded self-test: agentgate check --selftest
+  - {server: my-tools, tool: list_files, arguments: {path: "docs"}, expect: allow}
+  - {server: my-tools, tool: read_file, arguments: {path: "docs/a.md"}, expect: allow}
+  - {server: my-tools, tool: write_file, arguments: {path: "sandbox/x.txt", content: y}, expect: ask}
+  - {server: my-tools, tool: write_file, arguments: {path: "etc/passwd", content: y}, expect: ask}
+  - {server: my-tools, tool: delete_file, arguments: {path: "x"}, expect: deny}

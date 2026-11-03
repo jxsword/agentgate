@@ -1,0 +1,29 @@
+# agentgate template: FULL-TRUST (LOCAL ONLY)
+# Every tool allowed, no human gating. ONLY for fully-trusted local sandboxes
+# (throwaway VMs, demo containers). NEVER use against production systems.
+#
+# yaml-language-server: $schema=../policy.schema.json
+
+version: 1
+default_decision: allow
+on_ask: deny                # nothing will ask; belt & braces for unattended runs
+state_dir: .agentgate
+
+servers:
+  my-tools:
+    transport: stdio
+    command: python
+    args: ["-m", "my_server"]
+    call_timeout_seconds: 60
+
+agents:
+  claude-code:
+    servers:
+      my-tools:
+        default: allow
+        tools:
+          "*": allow
+        rate_limit: {calls: 600, window_seconds: 60}   # still bounded
+
+tests:
+  - {server: my-tools, tool: anything, expect: allow}
