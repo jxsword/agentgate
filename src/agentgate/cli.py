@@ -13,7 +13,7 @@ from pathlib import Path
 from . import __version__
 from .approvals import ApprovalError, ApprovalManager
 from .audit import AuditLog
-from .config import Config, load_config
+from .config import ConfigError, Config, load_config
 from .gateway import serve_sync
 from .grants import GrantStore
 
@@ -67,15 +67,24 @@ def cmd_pending(args) -> int:
 
 def cmd_approve(args) -> int:
     mgr = ApprovalManager(_state_dir(args))
-    try:
-        decision = mgr.decide(args.request_id, allow=args.allow, approver=args.approver,
-                              reason=args.reason)
-    except ApprovalError as e:
-        print(f"agentgate: {e}", file=sys.stderr)
-        return 1
+    ids = [args.request_id]
+    if getattr(args, "all", False):
+        ids = [r["id"] for r in mgr.list_pending() if "id" in r]
+        if not ids:
+            print("no pending requests to approve")
+            return 0
     verb = "APPROVED" if args.allow else "DENIED"
-    print(f"{verb} {decision['id']} (approver={decision['approver']})")
-    return 0
+    approved = 0
+    for rid in ids:
+        try:
+            decision = mgr.decide(rid, allow=args.allow, approver=args.approver,
+                                  reason=args.reason)
+        except ApprovalError as e:
+            print(f"agentgate: {e}", file=sys.stderr)
+            continue
+        approved += 1
+        print(f"{verb} {decision['id']} (approver={decision['approver']})")
+    return 0 if approved else 1
 
 
 def cmd_log(args) -> int:
@@ -599,6 +608,53 @@ def cmd_incident(args) -> int:
     return 0 if ok_all else 1
 
 
+def cmd_lint(args) -> int:
+    """W (v0.7): policy governance lint - semantic checks beyond validate."""
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        print(f"agentgate: {e}", file=sys.stderr)
+        return 2
+    problems: list[str] = []
+    warnings_: list[str] = []
+
+    if config.default_decision != "deny":
+        problems.append(f"default_decision is {config.default_decision!r} - policy should default to deny (fail-closed)")
+    if config.on_ask != "pending":
+        warnings_.append(f"on_ask={config.on_ask} - unattended mode denies all asks; ensure this is intended")
+    for agent, apol in config.agents.items():
+        for server, spol in apol.servers.items():
+            for rule in spol.rules:
+                if rule.pattern == "*":
+                    problems.append(
+                        f'agent {agent} server {server}: tool rule "*" is a blanket allow '
+                        f"- remove or narrow it")
+                if rule.decision == "deny" and rule.delegation is not None:
+                    warnings_.append(
+                        f"agent {agent} server {server} tool {rule.pattern!r}: delegation on a deny rule "
+                        "can never fire (grant wins only over the decision, not a deny rule)")
+                if rule.delegation and rule.delegation.bind == "tool+args":
+                    warnings_.append(
+                        f"agent {agent} server {server} tool {rule.pattern!r}: bind=tool+args pins the grant "
+                        "to exact args; if you want broader coverage use bind: tool")
+            if not spol.rules and spol.default == "allow":
+                warnings_.append(
+                    f"agent {agent} server {server}: default=allow with no rules is a broad grant")
+            if spol.prompts == "allow" or spol.resources == "allow":
+                warnings_.append(
+                    f"agent {agent} server {server}: prompts/resources exposed without ask gating")
+            if spol.rate_limit and spol.rate_limit.calls > 1000:
+                warnings_.append(f"agent {agent} server {server}: rate_limit is generous "
+                                 f"({spol.rate_limit.calls}/window)")
+
+    for w in warnings_:
+        print(f"WARN  {w}")
+    for p in problems:
+        print(f"FAIL  {p}")
+    print(f"\nlint: {len(problems)} problem(s), {len(warnings_)} warning(s)")
+    return 0 if not problems else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -630,12 +686,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_pending.set_defaults(func=cmd_pending)
 
     p_approve = sub.add_parser("approve", help="approve or deny a pending request")
-    p_approve.add_argument("request_id")
+    p_approve.add_argument("request_id", nargs="?", help="request id (omit with --all)")
     g = p_approve.add_mutually_exclusive_group(required=True)
     g.add_argument("--allow", dest="allow", action="store_true")
     g.add_argument("--deny", dest="allow", action="store_false")
     p_approve.add_argument("--approver", default="human")
     p_approve.add_argument("--reason", default=None, help="why (passed back to the agent on denial)")
+    p_approve.add_argument("--all", action="store_true",
+                           help="decide every pending request at once")
     p_approve.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_approve.set_defaults(func=cmd_approve)
 
@@ -686,6 +744,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate = sub.add_parser("validate", help="validate a policy file without starting the gateway")
     p_validate.add_argument("--config", required=True)
     p_validate.set_defaults(func=cmd_validate)
+
+    p_lint = sub.add_parser("lint", help="policy governance checks (semantic, beyond validate)")
+    p_lint.add_argument("--config", required=True)
+    p_lint.set_defaults(func=cmd_lint)
 
     p_report = sub.add_parser("report", help="aggregate audit into a per agent/tool decision report")
     p_report.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
