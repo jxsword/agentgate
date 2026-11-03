@@ -315,7 +315,8 @@ def _load_raw(path: Path, chain: tuple[Path, ...]) -> dict:
     if extends:
         if not isinstance(extends, str):
             raise ConfigError(f"extends must be a path string, got {extends!r}")
-        base_raw = _load_raw(rp.parent / extends, chain + (rp,))
+        base_raw = _load_raw(rp.parent / extends if not Path(extends).is_absolute()
+                             else Path(extends), chain + (rp,))
         raw = _deep_merge(base_raw, raw)
     return raw
 
