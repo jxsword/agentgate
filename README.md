@@ -4,7 +4,7 @@
 
 **Agent 原生 MCP 授权网关**：每次工具调用逐次鉴权、危险操作人类审批、审批可转为限时范围委托（scoped delegation）、全程追加式审计（哈希链防篡改）。
 
-对标 Permit.io MCP Gateway / Auth0 for GenAI 的**开源自托管替代**。选型依据见仓库上层 `research/调研报告_agent项目选型.md`（方向 C1：商业三家闭源验证需求，开源空白）。
+对标 Permit.io MCP Gateway / Auth0 for GenAI 的**开源自托管替代**——安全标准的工程化落地：OWASP Agentic Top 10（ASI03 权限滥用）、五眼联盟《Agentic AI 采用指南》（权限蔓延）、TC260《AI 安全治理框架 3.0》（工具越权），fail-closed 贯穿全部决策路径。
 
 ```mermaid
 graph LR
@@ -15,10 +15,18 @@ graph LR
     G -.->|audit.jsonl 哈希链| A["agentgate log --verify / report"]
 ```
 
-## 30 秒上手
+## 安装
 
 ```bash
-pip install -e .
+pip install agentgate        # PyPI（v0.7.0 起发布）
+# 或从源码：
+git clone https://github.com/jxsword/agentgate && cd agentgate
+pip install -e ".[dev]"      # 含 pytest，跑测试用
+```
+
+## 快速开始
+
+```bash
 # 用示例策略启动网关（对 MCP 客户端表现为一个普通 MCP 服务器）
 python -m agentgate run --config policies/example.yaml --agent claude-code
 
