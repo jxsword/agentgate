@@ -255,6 +255,7 @@ class Gateway:
         if decision.action in ("allow", "grant", "ask"):
             limiter_result = self.rate_limiter.check_and_record(self.agent, server)
             if limiter_result.limited:
+                self._bump(f'agent="{self.agent}",server="{server}",tool="{tool}",outcome="rate_limited"')
                 self.audit.append(
                     "rate_limited", decision="deny", retry_after=limiter_result.retry_after,
                     limit=limiter_result.limit, **base,
@@ -266,9 +267,11 @@ class Gateway:
                 )
 
         if decision.action in ("allow", "grant"):
+            self._bump(f'agent="{self.agent}",server="{server}",tool="{tool}",outcome="allowed"')
             return await self._proxy(server, tool, arguments, decision, base, decision.action)
 
         if decision.action == "deny":
+            self._bump(f'agent="{self.agent}",server="{server}",tool="{tool}",outcome="denied"')
             self.audit.append("call_denied", decision="deny", **base)
             return error_result(
                 f"agentgate: tool {name!r} denied by policy (matched rule: {decision.rule}). "
@@ -324,6 +327,7 @@ class Gateway:
     ) -> types.CallToolResult:
         full_name = f"{server}{NS_SEP}{tool}"
         if self.config.on_ask == "deny":
+            self._bump(f'agent="{self.agent}",server="{server}",tool="{tool}",outcome="denied"')
             self.audit.append("ask_denied", reason="on_ask=deny (unattended mode)", **base)
             return error_result(
                 f"agentgate: tool {full_name!r} requires human approval but the gateway "
@@ -523,6 +527,12 @@ class Gateway:
                 result = await self.upstreams[server].read_resource(uri)
             except Exception as e:  # noqa: BLE001 - not found on this server: try next
                 last_error = e
+                # Q4 (v0.7 review): every actual read attempt leaves a trace
+                self.audit.append(
+                    "resource_probe", decision="allow", server=server,
+                    rule=f"agents.{self.agent}.servers.{server}.resources",
+                    error=str(e), **detail,
+                )
                 continue
             self.audit.append(
                 "resource_call", decision="allow", server=server,
@@ -553,6 +563,14 @@ class Gateway:
 
     # ---- ops endpoints (G4) ----
 
+    def __init_metrics(self) -> None:
+        if not hasattr(self, "_metric_values"):
+            self._metric_values: dict[str, int] = {}
+
+    def _bump(self, key: str) -> None:
+        self.__init_metrics()
+        self._metric_values[key] = self._metric_values.get(key, 0) + 1
+
     def _status_payload(self) -> dict[str, Any]:
         payload = {
             "agent": self.agent,
@@ -572,6 +590,27 @@ class Gateway:
                 limits[server] = n
         payload["rate_windows"] = limits
         return payload
+
+    async def _metrics(self, request):
+        """R (v0.7): Prometheus text-format metrics (opt-in via /metrics route)."""
+        from starlette.responses import Response
+
+        self.__init_metrics()
+        lines = [
+            "# HELP agentgate_tool_calls_total proxied/denied tool calls",
+            "# TYPE agentgate_tool_calls_total counter",
+        ]
+        for key, value in sorted(self._metric_values.items()):
+            # key shape: calls|denied|<server>|<tool>|<decision>
+            lines.append(f"agentgate_tool_calls_total{{{key}}} {value}")
+        lines += [
+            "# HELP agentgate_upstreams_up upstream liveness (1=up)",
+            "# TYPE agentgate_upstreams_up gauge",
+        ]
+        for name, up in self.upstreams.items():
+            lines.append(f'agentgate_upstreams_up{{server="{name}"}} '
+                         f"{1 if up.session is not None else 0}")
+        return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
     async def _healthz(self, request):
         from starlette.responses import JSONResponse
@@ -650,6 +689,7 @@ class Gateway:
                 custom_starlette_routes=[
                     _Route("/healthz", self._healthz),
                     _Route("/status", self._status),
+                    _Route("/metrics", self._metrics),
                 ],
             )
             self.audit.append(

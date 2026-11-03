@@ -142,7 +142,8 @@ class ApprovalManager:
 
         A live approval request can never be older than the gateway's ask
         timeout (the waiter fails-closed at that point), so anything older is
-        garbage. Returns the number removed.
+        garbage. Returns the number removed. Also sweeps orphan decision files
+        (Q2 v0.7: decided but never consumed - e.g. approved at timeout edge).
         """
         now = time.time()
         removed = 0
@@ -150,6 +151,16 @@ class ApprovalManager:
             try:
                 if now - p.stat().st_mtime > max_age_seconds:
                     p.unlink()
+                    removed += 1
+            except OSError:
+                pass
+        # orphan decisions: decision files whose pending request is long gone
+        import json as _json
+
+        for d in self.decisions_dir.glob("*.json"):
+            try:
+                if now - d.stat().st_mtime > max_age_seconds:
+                    d.unlink()
                     removed += 1
             except OSError:
                 pass

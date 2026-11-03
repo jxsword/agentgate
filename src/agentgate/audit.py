@@ -39,8 +39,19 @@ class AuditLog:
             return
         if size < self.max_bytes:
             return
+        # Q1 (v0.7 review): pid+nanoseconds in the rotated name so two gateway
+        # processes sharing a state dir never overwrite each other's history
         stamp = time.strftime("%Y%m%d%H%M%S")
-        self.path.rename(self.path.with_name(f"{self.path.stem}-{stamp}{self.path.suffix}"))
+        candidate = self.path.with_name(f"{self.path.stem}-{stamp}-{os.getpid()}{self.path.suffix}")
+        n = 0
+        while candidate.exists():  # belt & braces on any filesystem
+            n += 1
+            candidate = self.path.with_name(
+                f"{self.path.stem}-{stamp}-{os.getpid()}-{n}{self.path.suffix}")
+        try:
+            self.path.rename(candidate)
+        except OSError:
+            return  # keep appending rather than lose the record
         # each file is an independent chain
         self._last_hash = GENESIS
 
