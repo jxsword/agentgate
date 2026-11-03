@@ -128,16 +128,19 @@ class ServerPolicy:
     # audit_arguments output (hashes/grant binding always use the real values)
     redact: list[str] = field(default_factory=list)
 
-    def redact_arguments(self, arguments: dict) -> dict:
-        out = {}
-        for key, value in (arguments or {}).items():
-            if any(fnmatch.fnmatchcase(key, pat) for pat in self.redact):
-                out[key] = "***"
-            elif isinstance(value, dict):
-                out[key] = self.redact_arguments(value)
-            else:
-                out[key] = value
-        return out
+    def redact_arguments(self, arguments: object) -> object:
+        """P2-14: recurse dicts AND lists; match top-level dict keys of each nesting."""
+        if isinstance(arguments, dict):
+            out = {}
+            for key, value in arguments.items():
+                if any(fnmatch.fnmatchcase(key, pat) for pat in self.redact):
+                    out[key] = "***"
+                else:
+                    out[key] = self.redact_arguments(value)
+            return out
+        if isinstance(arguments, list):
+            return [self.redact_arguments(item) for item in arguments]
+        return arguments
 
     def __post_init__(self) -> None:
         if self.default not in DECISIONS:

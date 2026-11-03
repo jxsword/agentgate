@@ -102,6 +102,9 @@ def cmd_log(args) -> int:
 
         try:
             since_ok = _dt.datetime.fromisoformat(args.since)
+            if since_ok.tzinfo is None:
+                # naive input: interpret as local time (P2-11: avoids aware<naive TypeError)
+                since_ok = since_ok.astimezone()
         except ValueError:
             print(f"agentgate: --since must be ISO 8601, got {args.since!r}", file=sys.stderr)
             return 2
@@ -292,8 +295,12 @@ def cmd_report(args) -> int:
     sources = sorted(state.glob("audit-*.jsonl")) + ([log_path] if log_path.exists() else [])
     since = None
     if args.since:
+        import datetime as _dt
+
         try:
             since = _dt.datetime.fromisoformat(args.since)
+            if since.tzinfo is None:
+                since = since.astimezone()  # P2-11: naive -> local time
         except ValueError:
             print(f"agentgate: --since must be ISO 8601, got {args.since!r}", file=sys.stderr)
             return 2

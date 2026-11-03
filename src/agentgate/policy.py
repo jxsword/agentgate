@@ -73,7 +73,13 @@ class Grant:
     def matches(self, agent: str, server: str, tool: str, arguments: dict[str, Any] | None) -> bool:
         if not self.active():
             return False
-        if agent != self.agent or server != self.server or not fnmatch.fnmatchcase(tool, self.tool):
+        if agent != self.agent or server != self.server:
+            return False
+        # P2-13 (v0.6 review): grants match tool names EXACTLY. A semi-trusted
+        # upstream could hand back a glob-metachar tool name ("w*"); a fnmatch
+        # here would let one approval widen into a wildcard grant. Policy RULES
+        # (operator-authored) keep fnmatch by design.
+        if tool != self.tool:
             return False
         if self.args_hash is not None and self.args_hash != canonical_args(arguments):
             return False

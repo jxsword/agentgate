@@ -102,7 +102,10 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
                     supplied = auth.removeprefix("Bearer ").strip()
                 if not supplied:
                     supplied = request.cookies.get("agentgate_ui", "")
-                if supplied != token:
+                # P2-10: constant-time comparison
+                import hmac as _hmac
+
+                if not (supplied and _hmac.compare_digest(supplied, token)):
                     if path == "/" and request.method == "GET":
                         return RedirectResponse("/login", status_code=303)
                     return PlainTextResponse("agentgate console: unauthorized", status_code=401)
@@ -124,7 +127,9 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
         form = await request.form()
         supplied = str(form.get("token") or "")
         resp = RedirectResponse("/", status_code=303)
-        if supplied == token:
+        import hmac as _hmac
+
+        if supplied and _hmac.compare_digest(supplied, token):
             # J1: the token itself is the credential; HttpOnly + SameSite keep it
             # out of scripts and cross-site posts. 8h session lifetime.
             resp.set_cookie("agentgate_ui", token, httponly=True, samesite="strict",
@@ -208,7 +213,9 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
         try:
             mgr.decide(request_id, allow=allow, approver=f"web:{approver}", reason=reason)
         except Exception as e:  # noqa: BLE001 - surface as flash via query param
-            return RedirectResponse(f"/?error={_esc(e)}", status_code=303)
+            from urllib.parse import quote as _quote
+
+            return RedirectResponse(f"/?error={_quote(str(e))}", status_code=303)
         return RedirectResponse("/", status_code=303)
 
     async def revoke(request: Request) -> RedirectResponse:

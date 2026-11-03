@@ -125,7 +125,12 @@ class ApprovalManager:
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if path.exists():
-                decision = json.loads(path.read_text(encoding="utf-8"))
+                try:
+                    decision = json.loads(path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    # P1-3: writer may be mid-replace on some filesystems; keep polling
+                    await asyncio.sleep(0.2)
+                    continue
                 path.unlink()
                 self.remove_request(request_id)
                 return decision
@@ -186,7 +191,9 @@ class ApprovalManager:
                 request_id, allow, approver, decision["decided_at"],
                 str(request.get("arguments_hash")), secret, reason or "",
             )
-        decision_path.write_text(
-            json.dumps(decision, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        # P1-3 (v0.6 review): atomic write - the gateway polls this file every
+        # 0.2s and must never read a truncated decision
+        tmp = decision_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(decision, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(decision_path)
         return decision

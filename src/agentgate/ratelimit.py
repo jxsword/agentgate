@@ -41,7 +41,10 @@ class RateLimiter:
             return RateLimitResult(limited=False, retry_after=0)
         now = now if now is not None else time.monotonic()
         key = (agent, server)
-        window, config = self._windows.get(key, (deque(), rl))
+        window, _old = self._windows.get(key, (deque(), rl))
+        # P2-7 (v0.6 review): always use the CURRENT config - hot-reload must be
+        # able to tighten/loosen limits without a restart
+        config = rl
         # drop entries outside the window
         horizon = now - config.window_seconds
         while window and window[0] <= horizon:
@@ -61,7 +64,11 @@ class RateLimiter:
         if rl is None:
             return 0
         now = now if now is not None else time.monotonic()
-        window, config = self._windows.get((agent, server), (deque(), rl))
+        rl = self._config_for(agent, server)
+        if rl is None:
+            return 0
+        window, _old = self._windows.get((agent, server), (deque(), rl))
+        config = rl  # current config (P2-7)
         horizon = now - config.window_seconds
         while window and window[0] <= horizon:
             window.popleft()

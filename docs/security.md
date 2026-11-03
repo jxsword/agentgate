@@ -61,5 +61,8 @@
 - **新威胁**：锁文件本身被删除/DoS。
 - **缓解**：锁是协作式建议锁（同信任域假设内有效）；grants.json 损坏按更严格方向降级（清空=回到 ask/deny）。
 
-## 7. 已知局限速查（截至 v0.6）
-stdiio 单客户端假设 ｜ 审批/委托文件未做密码学签名绑定主体链（HMAC 已覆盖内容完整性，密钥同机可读则失效）｜ redact 仅顶层键 ｜ 控制台无 HTTPS ｜ 审计链 genesis 本地生成（跨机公开可验证锚定属未来工作）。
+## 7. 已知局限速查（截至 v0.6，独立复审后）
+
+已修复（v0.6 复审批次）：multi-agent OPA 静默失效、热更新移除身份 fail-open（现为 retire deny-all）、审批文件原子写、非回环 HTTP 裸奔闸门、watcher 宽异常、限流热更新、unknown-tool/OPA 脱敏、常数时间 token 比较、naive --since、redact 递归 list、grant 精确匹配（防 glob 放大）。
+
+仍开放（低风险，已评估）：多网关进程共享 state 目录会破坏审计链（单进程为主用例）；`/status` 端点无认证（仅元信息）；resource 探测中间步骤审计粒度；超时边界孤儿 decision 文件（uuid 不可重放，仅磁盘痕迹）；控制台无 HTTPS（部署方前置反代）。

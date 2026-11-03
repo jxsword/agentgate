@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import sys
 from contextlib import AsyncExitStack
 from typing import Any
@@ -66,6 +67,10 @@ class Gateway:
         self.rate_limiter = RateLimiter()
         self.rate_limiter.bind(lambda a, s: self.config.agents.get(a, AgentPolicy()).servers.get(s))
         self._tools_cache: tuple[float, types.ListToolsResult] | None = None
+        # P1-2 (v0.6 review): hot-reload must fail CLOSED for retired identities —
+        # an agent/server removed from the policy keeps serving only if we let it
+        self.retired = False
+        self.retired_servers: set[str] = set()
 
     def _reload_policy_once(self, path, last_mtime) -> float | None:
         """One hot-reload step; returns the mtime to remember (None on stat error)."""
@@ -82,10 +87,23 @@ class Gateway:
 
         try:
             new_config = load_config(path)
-        except ConfigError as e:
+        except Exception as e:  # noqa: BLE001 - ANY reload failure keeps the old policy
             self.audit.append("policy_reload_failed", agent=self.agent, error=str(e))
             print(f"[agentgate] policy reload FAILED (keeping old policy): {e}", file=sys.stderr)
             return mtime
+        # P1-2: retire identities/servers that the new policy removed (fail-closed)
+        if self.agent not in new_config.agents:
+            self.retired = True
+            self.audit.append("policy_reload_failed", agent=self.agent,
+                              error="agent removed from policy; identity retired (deny-all)")
+            print(f"[agentgate] agent '{self.agent}' removed from policy -> retired (deny-all)",
+                  file=sys.stderr)
+        else:
+            self.retired_servers |= (set(self.config.servers) - set(new_config.servers)) \
+                if self.agent in self.config.agents else set()
+            if self.retired_servers & set(self.upstreams):
+                print(f"[agentgate] servers retired after reload: "
+                      f"{sorted(self.retired_servers & set(self.upstreams))}", file=sys.stderr)
         self.config = new_config
         self.engine.config = new_config
         self.audit.append("policy_reloaded", agent=self.agent,
@@ -166,6 +184,16 @@ class Gateway:
     async def _call_tool(self, ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
         name = params.name
         arguments = dict(params.arguments or {})
+        # P1-2: hot-reload retirement gate - an identity/server removed from the
+        # policy must deny everything, regardless of leftover rules
+        if self.retired:
+            self.audit.append("call_denied", agent=self.agent, server="(retired)",
+                              tool=name, arguments_hash=canonical_args(arguments),
+                              rule="retired_identity", decision="deny")
+            return error_result(
+                f"agentgate: agent identity {self.agent!r} was retired from the policy "
+                f"(hot-reload). All calls denied."
+            )
         parsed = split_tool_name(name)
         if parsed is None or not parsed[1] or parsed[0] not in self.upstreams:
             unknown: dict[str, Any] = dict(
@@ -177,13 +205,25 @@ class Gateway:
                 decision="deny",
             )
             if self.config.audit_arguments:
-                unknown["arguments"] = arguments
+                # P2-8: redact whenever the server is identifiable, even on unknown-tool
+                if parsed and parsed[0] in self.upstreams:
+                    unknown["arguments"] = self._redact(parsed[0], arguments)
+                else:
+                    unknown["arguments"] = arguments
             self.audit.append("call_denied", **unknown)
             return error_result(
                 f"agentgate: unknown tool {name!r}. Tools are namespaced '<server>--<tool>'; "
                 f"call tools/list to discover what this gateway exposes."
             )
         server, tool = parsed
+        if server in self.retired_servers:
+            self.audit.append("call_denied", agent=self.agent, server=server,
+                              tool=tool, arguments_hash=canonical_args(arguments),
+                              rule="retired_server", decision="deny")
+            return error_result(
+                f"agentgate: upstream '{server}' was removed from the policy "
+                f"(hot-reload). Denied (fail-closed)."
+            )
 
         try:
             maybe = self.engine.evaluate(self.agent, server, tool, arguments)
@@ -587,6 +627,15 @@ class Gateway:
         """
         import uvicorn
 
+        # P1-4 (v0.6 review): a non-loopbind HTTP gateway exposes the agent's
+        # entire policy surface unauthenticated - refuse unless the operator
+        # explicitly opts in via the same env gate the console uses
+        if host not in ("127.0.0.1", "localhost", "::1") and not os.environ.get("AGENTGATE_HTTP_EXPOSE_OK"):
+            raise SystemExit(
+                f"agentgate run --http {host}:{port}: refusing unauthenticated non-loopback "
+                f"bind. Set AGENTGATE_HTTP_EXPOSE_OK=1 to accept the risk (prefer putting "
+                f"an authenticating reverse proxy in front, or keep 127.0.0.1)."
+            )
         async with AsyncExitStack() as stack:
             await self._start_upstreams(stack)
             self._startup_cleanup()
@@ -751,6 +800,10 @@ async def serve_multi_http(config: Config, state_dir: str | None, host: str, por
 
         for agent in sorted(config.agents):
             engine = PolicyEngine(config, grants)
+            if getattr(config, "policy_backend_url", None):
+                from .policy_backends import OpaPolicyEngine
+
+                engine = OpaPolicyEngine(config, grants, url=config.policy_backend_url)
             gw = Gateway(config, agent, engine, approvals, grants, audit,
                          config_path=config_path, watch_policy=False)
             gw.upstreams = shared
@@ -800,30 +853,39 @@ async def serve_multi_http(config: Config, state_dir: str | None, host: str, por
         watcher = None
         if watch_policy and config_path:
             async def _watch_all():
-                from .config import ConfigError, load_config
+                from .config import load_config
 
                 path = Path(config_path)
-                last = path.stat().st_mtime
+                try:
+                    last = path.stat().st_mtime
+                except OSError:
+                    last = 0.0
                 while True:
                     await asyncio.sleep(2.0)
                     try:
                         mtime = path.stat().st_mtime
                     except OSError:
-                        continue
+                        continue  # transient fs error: keep watching
                     if mtime == last:
                         continue
                     last = mtime
                     try:
                         new_config = load_config(path)
-                    except ConfigError as e:
+                    except Exception as e:  # noqa: BLE001 - P1-5: any reload failure keeps old policy
                         audit.append("policy_reload_failed", error=str(e))
+                        print(f"[agentgate] policy reload FAILED (keeping old policy): {e}",
+                              file=sys.stderr)
                         continue
-                    # NOTE: agents/servers set changes need process restart; policy
-                    # values (decisions/args_match/defaults) hot-swap safely.
-                    for _, gw, _ in units:
-                        if gw.agent in new_config.agents:
+                    # P1-2: retire agents/servers the new policy removed (fail-closed)
+                    for agent, gw, _ in units:
+                        if agent not in new_config.agents:
+                            gw.retired = True
+                            audit.append("policy_reload_failed", agent=agent,
+                                         error="agent removed from policy; identity retired (deny-all)")
+                        else:
                             gw.config = new_config
                             gw.engine.config = new_config
+                            gw.retired_servers |= (set(gw.config.servers) - set(new_config.servers))
                     audit.append("policy_reloaded", agents=sorted(new_config.agents))
             watcher = asyncio.create_task(_watch_all())
 

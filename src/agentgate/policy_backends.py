@@ -71,13 +71,23 @@ class OpaPolicyEngine(PolicyEngine):
         if self._is_local_explicit(local):
             return local
         try:
-            body = await self._query(agent, server, tool, arguments)
+            body = await self._query(agent, server, tool, self._redact_out(server, arguments))
         except Exception:  # noqa: BLE001 - fail-closed on any backend failure
             return Decision(action="deny", rule=f"opa:error({self.url})")
         action = str(body.get("decision", "deny"))
         if action not in ("allow", "deny", "ask"):
             return Decision(action="deny", rule=f"opa:invalid({action!r})")
         return Decision(action=action, rule=f"opa:{self.url}")
+
+    def _redact_out(self, server: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+        """P2-9 (v0.6 review): never ship redacted-policy keys to the remote endpoint."""
+        spol = None
+        apol = self.config.agents.get("*") or next(iter(self.config.agents.values()), None)
+        if apol is not None:
+            spol = apol.servers.get(server)
+        if spol is not None and getattr(spol, "redact", None):
+            return spol.redact_arguments(arguments or {})
+        return arguments or {}
 
     def evaluate(self, agent, server, tool, arguments):  # type: ignore[override]
         # sync call sites get a local-only answer; the gateway awaits
