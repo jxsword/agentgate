@@ -284,6 +284,18 @@ HTTP 模式 `/metrics`：`agentgate_tool_calls_total{agent,server,tool,outcome}`
 #### FR-OPS-008 HTTPS 部署指南 P2 V0.7
 `docs/deploy-https.md`：Caddy/nginx 双形态反代（TLS+认证+头校验）与暴露前清单。
 
+#### FR-CLI-013 策略内嵌自测 P1 V0.7
+策略文件 `tests:` 键（`{server, tool, arguments?, expect}` 数组）；`agentgate check --selftest` 执行并按 expect 断言，失败退出码 1（策略漂移 CI 门禁）。
+
+#### FR-AP-011 授权用量告警 P2 V0.7
+策略 `grant_usage_alert: N`——委托使用计数达阈值时审计 `grant_usage_alert` 并 stderr 警告一次/委托（进程生命周期计数）。
+
+#### FR-AU-013 取证时间线 P2 V0.7
+`agentgate incident <id>`：对 grant_id/request_id 做两跳关联（含 approval_requested），重建完整时间线并核验全部审计文件链完整性（COMPROMISED 报告）。
+
+#### FR-OPS-009 包构建演练 P3 V0.7
+本地 `python -m build` 验证 sdist+wheel 可产（发布前置）。
+
 
 
 

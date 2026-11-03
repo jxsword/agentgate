@@ -246,6 +246,19 @@ agentgate doctor --config policy.yaml --reach  # 同时探测上游可达性
 - **审计多进程**：轮转文件名带 pid，多网关共享 state 目录不再互相覆盖
 - **HTTPS 暴露**：见 `docs/deploy-https.md`（Caddy/nginx 反代 + 安全清单）
 
+### 4.1.19 策略自测与取证（v0.7）
+
+- **策略内嵌用例**：策略文件加 `tests:` 键，CI 用 `agentgate check --config p.yaml --agent bot --selftest` 防策略漂移（用例即文档）：
+
+  ```yaml
+  tests:
+    - {server: demo, tool: delete_file, expect: deny}
+    - {server: demo, tool: write_file, arguments: {path: "sandbox/x"}, expect: ask}
+  ```
+
+- **授权用量告警**：策略加 `grant_usage_alert: 50`——某委托被使用 50 次时审计 `grant_usage_alert` 并打 stderr 警告（进程生命周期计数，重启清零）。
+- **取证**：`agentgate incident <grant_id>`——重建该委托的完整时间线（审批→签发→每次使用→结果）并核验审计链完整性。
+
 ### 4.1.12 Docker 部署（v0.3）
 
 ```bash

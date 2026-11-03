@@ -9,6 +9,10 @@
 - **孤儿 decision 清扫**：`cleanup_stale` 一并清理超龄 decision 文件（超时边缘批准的残留）
 - **资源探测审计**：`read_resource` 的逐 server 探测失败均留 `resource_probe` 记录
 - **部署指南** `docs/deploy-https.md`：Caddy/nginx 反代形态 + 暴露前安全清单
+- **策略内嵌自测**：`tests:` 用例 + `check --selftest`（策略漂移 CI 门禁）
+- **授权用量告警**：`grant_usage_alert` 审计事件 + stderr 警告
+- **取证时间线** `agentgate incident <id>`：两跳关联重建委托全生命周期并核验审计链
+- 包构建演练（sdist/wheel 可产）
 - gateway.py 行尾规范化（CI eol=lf 生效）
 
 ## 0.6.0 (2026-11-03)

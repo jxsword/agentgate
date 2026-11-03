@@ -61,6 +61,7 @@ agentgate revoke <grant_id>       # 即时撤销
 - **参数脱敏**（v0.5）：server 策略 `redact`，审批展示/审计打码，委托绑定不受影响
 - **审计查询与一键演示**（v0.5）：`log --filter/--grep`、`agentgate demo`、`scripts/bench.py`
 - **策略组合与诊断**（v0.6）：`extends` 基座复用、`agentgate doctor` 环境体检、`report --grants` 委托用量、`grants <id>` 详情
+- **可观测**（v0.7）：`/metrics` Prometheus 端点、`incident <id>` 取证时间线、策略内嵌 `tests:` 自测、`grant_usage_alert` 用量告警
 
 ## 文档
 
