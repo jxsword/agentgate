@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 (2026-11-04)
+
+治理开箱化与运维深化（SRS §3.13）：
+
+- **策略模板库** `policies/templates/`：readonly-sandbox / full-trust（文档化不安全，lint 必须拦截）/ ci-unattended 三模板，各带内嵌自测；防漂移套件进 CI
+- **审计导出 SQLite**：`agentgate export-audit`——全量审计（含轮转）入 events 表（索引齐全、全量替换语义），支持 SQL 取证
+- **控制台 pending 上下文**：新增 requested 列（创建时间 + 等待时长人性化显示）
+- README 公开版重写（标准引用、PyPI 安装、快速开始）；fuzz 确定性 seed 意图注释固化
+
 ## 0.7.0 (2026-11-03)
 
 可观测与部署（SRS §3.12）+ 复审遗留清零：

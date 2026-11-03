@@ -311,6 +311,20 @@ Web 控制台授权表增加 uses 列（审计 join 计数，与 `report --grant
 #### FR-CLI-018 审计输出排序键 P3 V0.7
 `log --jsonl`（含 follow）输出稳定排序键的 JSONL，便于下游工具消费。
 
+### 3.13 模块：V0.8 增量需求（治理开箱化与运维深化）
+
+#### FR-OPS-010 策略模板库 P1 V0.8
+`policies/templates/`：readonly-sandbox（读放行/写 ask/破坏性 deny）、full-trust（文档化不安全，lint 必须拦截）、ci-unattended（on_ask=deny + env 范围部署白名单）三模板，各带内嵌 `tests:`；防漂移套件（validate+selftest+lint 预期）进 CI。
+
+#### FR-CLI-019 审计 SQLite 导出 P1 V0.8
+`agentgate export-audit --state-dir --out`：全量审计（含轮转文件）导出至 events 表（ts/event/agent/server/tool/decision/rule/grant_id/request_id/error/raw + event/agent/grant 索引），全量替换语义。
+
+#### FR-CLI-020 控制台 pending 上下文 P3 V0.8
+pending 表新增 requested 列：创建时间 + 等待时长人性化显示（s/m/h 进位）。
+
+#### FR-CLI-021 批量与详情 JSON 化 P3 V0.7 收尾
+`approve --all`（FR-CLI-014 实现）、`grants [id] --json`、`policy-export`、`check-fuzz`、`log --jsonl`、`incident` 两跳取证（FR-AU-013）。
+
 
 
 

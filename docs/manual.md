@@ -266,6 +266,18 @@ agentgate doctor --config policy.yaml --reach  # 同时探测上游可达性
   - FAIL：`default_decision != deny`、`"*"` 通配规则（blanket allow）
   - WARN：`on_ask=deny` 无人值守模式、`default=allow` 无规则、暴露 prompts/resources 无审批门、`rate_limit` 阈值偏宽（>1000/窗口）、delegation 落在 deny 规则上（防御性检查，实际加载期已被拒）
 
+### 4.1.21 策略模板与审计导出（v0.8）
+
+- **开箱模板**：`policies/templates/` 三个起步模板——`readonly-sandbox.yaml`（推荐起点：读放行/写审批/破坏性拒绝）、`ci-unattended.yaml`（CI 无人值守）、`full-trust.yaml`（仅限一次性沙箱，`lint` 会拦截）。复制后按 CHANGE 注释改三处（上游命令、agent 名、沙箱路径），用 `validate`/`lint`/`check --selftest` 三连验证。
+- **审计导出 SQL**：`agentgate export-audit --state-dir .agentgate --out audit.db`——全量事件入 SQLite `events` 表（含原始行），直接 SQL 取证：
+
+  ```sql
+  sqlite3 audit.db "SELECT agent, tool, COUNT(*) FROM events
+                    WHERE decision='deny' GROUP BY agent, tool"
+  ```
+
+- **控制台**：pending 表新增 requested 列（创建时间 + 等待时长）。
+
 ### 4.1.12 Docker 部署（v0.3）
 
 ```bash

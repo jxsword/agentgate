@@ -173,6 +173,8 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
                     rows.append(f"<tr><td>{_esc(r.get('id'))}</td><td>corrupt pending file</td></tr>")
                     continue
                 delegation = r.get("delegation") or {}
+                created = str(r.get("created_at", ""))
+                wait = _wait_duration(created)
                 rows.append(
                     f"<tr><td><code>{_esc(r.get('id'))}</code></td>"
                     f"<td>{_esc(r.get('agent'))}</td>"
@@ -180,6 +182,7 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
                     f"<td><pre>{_esc(json_pretty(r.get('arguments')))}</pre></td>"
                     f"<td>{_esc(r.get('rule'))}</td>"
                     f"<td>{_esc(delegation) if delegation else '<span class=muted>none</span>'}</td>"
+                    f"<td>{_esc(created)}<br><span class=muted>{_esc(wait)}</span></td>"
                     f"<td>"
                     f"<form method='post' action='{_action('/approve/' + str(r.get('id')))}'>"
                     f"<input type='hidden' name='action' value='allow'>"
@@ -192,7 +195,7 @@ def build_app(state_dir: str | Path, token: str | None = None) -> Starlette:
                     f"</td></tr>"
                 )
             pending_table = ("<table><tr><th>id</th><th>agent</th><th>tool</th><th>arguments</th>"
-                             "<th>rule</th><th>delegation</th><th>decision</th></tr>"
+                             "<th>rule</th><th>delegation</th><th>requested</th><th>decision</th></tr>"
                              + "".join(rows) + "</table>")
         else:
             pending_table = "<p class='muted'>nothing pending</p>"
@@ -270,6 +273,24 @@ def _remaining(grant) -> str:
     if secs >= 3600:
         return f"in {secs // 3600}h{(secs % 3600) // 60:02d}m"
     return f"in {secs // 60}m{secs % 60:02d}s"
+
+
+def _wait_duration(created_at: str) -> str:
+    """T3 (v0.8): human-readable wait time since the pending request was filed."""
+    import datetime as _dt
+
+    try:
+        created = _dt.datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%S%z")
+    except (ValueError, TypeError):
+        return ""
+    secs = int((_dt.datetime.now(created.tzinfo) - created).total_seconds())
+    if secs < 0:
+        return "just now"
+    if secs < 60:
+        return f"waiting {secs}s"
+    if secs < 3600:
+        return f"waiting {secs // 60}m{secs % 60:02d}s"
+    return f"waiting {secs // 3600}h{(secs % 3600) // 60:02d}m"
 
 
 def run_ui(state_dir: str | Path, host: str, port: int, token: str | None = None) -> None:
