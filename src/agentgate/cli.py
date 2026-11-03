@@ -548,15 +548,21 @@ def cmd_incident(args) -> int:
     state = _state_dir(args)
     sources = sorted(state.glob("audit-*.jsonl")) + \
         ([state / "audit.jsonl"] if (state / "audit.jsonl").exists() else [])
-    hits = []
+    records = []
     for src in sources:
         for line in src.read_text(encoding="utf-8").splitlines():
             try:
-                rec = json.loads(line)
+                records.append((src.name, json.loads(line)))
             except json.JSONDecodeError:
                 continue
-            if args.grant_id in (rec.get("grant_id"), rec.get("request_id"), rec.get("id")):
-                hits.append((src.name, rec))
+
+    # two-hop join: direct id hits, then any request_id referenced by them
+    hits = [(s, r) for s, r in records
+            if args.grant_id in (r.get("grant_id"), r.get("request_id"), r.get("id"))]
+    related_request_ids = {r.get("request_id") for _, r in hits if r.get("request_id")}
+    extra = [(s, r) for s, r in records
+             if (s, r) not in hits and r.get("request_id") in related_request_ids]
+    hits = sorted(hits + extra, key=lambda x: str(x[1].get("ts", "")))
     if not hits:
         print(f"no audit records reference {args.grant_id!r}")
         return 1
