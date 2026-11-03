@@ -759,6 +759,65 @@ def cmd_fuzz(args) -> int:
     return 0
 
 
+def cmd_export_audit(args) -> int:
+    """T2 (v0.8): export the audit trail (incl. rotated files) to SQLite for
+    structured querying (WHERE/JOIN/GROUP BY without grep)."""
+    import sqlite3
+
+    state = _state_dir(args)
+    sources = sorted(state.glob("audit-*.jsonl")) + \
+        ([state / "audit.jsonl"] if (state / "audit.jsonl").exists() else [])
+    if not sources:
+        print(f"agentgate: no audit files under {state}", file=sys.stderr)
+        return 1
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        out.unlink()  # full replace semantics
+    conn = sqlite3.connect(out)
+    conn.execute("""
+        CREATE TABLE events (
+            seq INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            ts TEXT,
+            event TEXT,
+            agent TEXT,
+            server TEXT,
+            tool TEXT,
+            decision TEXT,
+            rule TEXT,
+            grant_id TEXT,
+            request_id TEXT,
+            error TEXT,
+            raw TEXT NOT NULL
+        )""")
+    conn.execute("CREATE INDEX idx_events_event ON events(event)")
+    conn.execute("CREATE INDEX idx_events_agent ON events(agent)")
+    conn.execute("CREATE INDEX idx_events_grant ON events(grant_id)")
+    seq = 0
+    for src in sources:
+        for line in src.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            seq += 1
+            conn.execute(
+                "INSERT INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (seq, src.name, rec.get("ts"), rec.get("event"), rec.get("agent"),
+                 rec.get("server"), rec.get("tool"), rec.get("decision"),
+                 rec.get("rule"), rec.get("grant_id"), rec.get("request_id"),
+                 rec.get("error"), line),
+            )
+    conn.commit()
+    count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    conn.close()
+    print(f"exported {count} events from {len(sources)} file(s) -> {out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -889,6 +948,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_incident.add_argument("grant_id")
     p_incident.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_incident.set_defaults(func=cmd_incident)
+
+    p_export = sub.add_parser("export-audit",
+                              help="export the audit trail to SQLite (structured queries)")
+    p_export.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    p_export.add_argument("--out", required=True, help="output .db path (full replace)")
+    p_export.set_defaults(func=cmd_export_audit)
 
     return parser
 
