@@ -201,6 +201,11 @@ class Config:
     # v0.4 (H1): debug aid - write full tool arguments into audit records
     # (default off: audit keeps only the canonical-arguments hash)
     audit_arguments: bool = False
+    # v0.7 (U): policy-embedded test cases for 'agentgate check --selftest';
+    # shape identical to check --cases JSON: [{server, tool, arguments?, expect}]
+    tests: list[dict] = field(default_factory=list)
+    # v0.7 (U): audit a warning event once a grant's use count crosses this
+    grant_usage_alert: int = 0  # 0 disables
 
     def __post_init__(self) -> None:
         if self.default_decision not in DECISIONS:
@@ -334,6 +339,8 @@ def _parse_config(raw: dict) -> Config:
         policy_backend_url=raw.get("policy_backend_url"),
         list_cache_seconds=int(raw.get("list_cache_seconds", 30)),
         audit_arguments=bool(raw.get("audit_arguments", False)),
+        tests=[dict(t) for t in (raw.get("tests") or []) if isinstance(t, dict)],
+        grant_usage_alert=int(raw.get("grant_usage_alert", 0)),
     )
     for name, scfg in (raw.get("servers") or {}).items():
         if not isinstance(scfg, dict):

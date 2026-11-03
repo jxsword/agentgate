@@ -244,12 +244,19 @@ def cmd_check(args) -> int:
             print("agentgate: cases file must be a JSON array", file=sys.stderr)
             return 2
     else:
-        try:
-            arguments = _json.loads(args.arguments) if args.arguments else None
-        except _json.JSONDecodeError as e:
-            print(f"agentgate: --args must be valid JSON: {e}", file=sys.stderr)
-            return 2
-        cases = [{"server": args.server, "tool": args.tool, "arguments": arguments}]
+        # U (v0.7): --selftest runs the policy's embedded `tests:` cases
+        if args.selftest:
+            cases = config.tests
+            if not cases:
+                print("agentgate: policy has no embedded `tests:` cases", file=sys.stderr)
+                return 2
+        else:
+            try:
+                arguments = _json.loads(args.arguments) if args.arguments else None
+            except _json.JSONDecodeError as e:
+                print(f"agentgate: --args must be valid JSON: {e}", file=sys.stderr)
+                return 2
+            cases = [{"server": args.server, "tool": args.tool, "arguments": arguments}]
 
     failures = 0
     for case in cases:
@@ -663,6 +670,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--args", dest="arguments", help="JSON object of tool arguments (single-case mode)")
     p_check.add_argument("--cases", help="JSON array of {server, tool, arguments, expect?} for batch mode")
     p_check.add_argument("--diff", help="second policy file: mark cases whose decision differs")
+    p_check.add_argument("--selftest", action="store_true",
+                         help="run the policy's embedded `tests:` cases (CI gate)")
     p_check.set_defaults(func=cmd_check)
 
     p_validate = sub.add_parser("validate", help="validate a policy file without starting the gateway")

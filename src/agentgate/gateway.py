@@ -71,6 +71,7 @@ class Gateway:
         # an agent/server removed from the policy keeps serving only if we let it
         self.retired = False
         self.retired_servers: set[str] = set()
+        self._grant_uses: dict[str, int] = {}
 
     def _reload_policy_once(self, path, last_mtime) -> float | None:
         """One hot-reload step; returns the mtime to remember (None on stat error)."""
@@ -293,6 +294,20 @@ class Gateway:
         self.audit.append(
             "call", decision=decision_label, grant_id=decision.grant_id, **base
         )
+        # U2 (v0.7): grant usage threshold - fire one warning per grant id when
+        # the number of times it was consumed crosses grant_usage_alert
+        if decision_label == "grant" and self.config.grant_usage_alert > 0:
+            self._grant_uses[decision.grant_id] = self._grant_uses.get(decision.grant_id, 0) + 1
+            if self._grant_uses[decision.grant_id] == self.config.grant_usage_alert:
+                self.audit.append(
+                    "grant_usage_alert", grant_id=decision.grant_id,
+                    uses=self._grant_uses[decision.grant_id],
+                    threshold=self.config.grant_usage_alert,
+                    agent=self.agent, server=server, tool=tool,
+                    rule=f"grant:{decision.grant_id}",
+                )
+                print(f"[agentgate] WARNING: grant {decision.grant_id} used "
+                      f"{self.config.grant_usage_alert} times", file=sys.stderr)
         try:
             result = await self.upstreams[server].call_tool(tool, arguments)
         except Exception as e:  # noqa: BLE001
