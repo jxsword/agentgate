@@ -349,7 +349,10 @@ def cmd_report(args) -> int:
                         continue
                 except ValueError:
                     pass
-            key = (str(rec.get("agent")), str(rec.get("tool")))
+            if args.by_rule:
+                key = (str(rec.get("agent")), str(rec.get("rule")))
+            else:
+                key = (str(rec.get("agent")), str(rec.get("tool")))
             row = rows.setdefault(key, {"allowed": 0, "denied": 0, "ask_allowed": 0})
             total_decisions += 1
             if rec.get("event") == "call":
@@ -359,6 +362,14 @@ def cmd_report(args) -> int:
                     row["ask_allowed"] += 1
             else:  # call_denied / ask_denied / rate_limited
                 row["denied"] += 1
+
+    # Y (v0.7): report shows rule attribution when grouping by rule
+    if args.by_rule:
+        label_head = "rule"
+        label_key = lambda r: r[1]  # rule name
+    else:
+        label_head = "tool"
+        label_key = lambda r: r[1]  # tool name
 
     if args.grants:
         # L1 (v0.6): delegation usage view - join call records (grant_id) with grants.json
@@ -403,10 +414,11 @@ def cmd_report(args) -> int:
         return 0
 
     if args.format == "json":
+        head = "rule" if args.by_rule else "tool"
         print(json.dumps({
             "total_decisions": total_decisions,
             "rows": [
-                {"agent": a, "tool": t, **counts,
+                {head: t, "agent": a, **counts,
                  "denial_rate": round(counts["denied"] / max(sum(counts.values()), 1), 3)}
                 for (a, t), counts in sorted(rows.items())
             ],
@@ -416,19 +428,22 @@ def cmd_report(args) -> int:
         import csv as _csv
 
         writer = _csv.writer(sys.stdout, lineterminator="\n")
-        writer.writerow(["agent", "tool", "allowed", "ask_allowed", "denied", "denial_rate"])
-        for (agent, tool), c in sorted(rows.items()):
-            writer.writerow([agent, tool, c["allowed"], c["ask_allowed"], c["denied"],
+        head = "rule" if args.by_rule else "tool"
+        writer.writerow(["agent", head, "allowed", "ask_allowed", "denied", "denial_rate"])
+        for (agent, name), c in sorted(rows.items()):
+            writer.writerow([agent, name, c["allowed"], c["ask_allowed"], c["denied"],
                              round(c["denied"] / max(sum(c.values()), 1), 3)])
         return 0
 
     if not rows:
         print("no tool decisions found in audit")
         return 0
-    print(f"{'agent':<16} {'tool':<28} {'allow/grant':>11} {'ask->ok':>8} {'denied':>7} {'deny%':>6}")
-    for (agent, tool), c in sorted(rows.items()):
+    head = "rule" if args.by_rule else "tool"
+    width = 40 if args.by_rule else 28
+    print(f"{'agent':<16} {head:<{width}} {'allow/grant':>11} {'ask->ok':>8} {'denied':>7} {'deny%':>6}")
+    for (agent, name), c in sorted(rows.items()):
         n = sum(c.values())
-        print(f"{agent:<16.16} {tool:<28.28} {c['allowed']:>11} {c['ask_allowed']:>8} "
+        print(f"{agent:<16.16} {name:<{width}.{width}} {c['allowed']:>11} {c['ask_allowed']:>8} "
               f"{c['denied']:>7} {round(100 * c['denied'] / n):>5}%")
     print(f"\ntotal decisions: {total_decisions} (sources: {len(sources)} file(s))")
     return 0
@@ -655,6 +670,93 @@ def cmd_lint(args) -> int:
     return 0 if not problems else 1
 
 
+def cmd_policy_export(args) -> int:
+    """Z (v0.7): export a policy as stable JSON (for diffing/versioning)."""
+    import yaml
+
+    raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    if isinstance(raw, dict) and "extends" in raw:
+        # resolve extends via load_config to merge, then emit as plain dict
+        from .config import load_config
+
+        cfg = load_config(args.config)
+        def ser(o):
+            from dataclasses import asdict, is_dataclass
+            if is_dataclass(o):
+                return {k: ser(v) for k, v in asdict(o).items() if v is not None}
+            if isinstance(o, dict):
+                return {k: ser(v) for k, v in o.items()}
+            if isinstance(o, (list, tuple)):
+                return [ser(v) for v in o]
+            if isinstance(o, Path):
+                return str(o)
+            return o
+        data = {
+            "version": 1,
+            "default_decision": cfg.default_decision,
+            "state_dir": str(cfg.state_dir),
+            "on_ask": cfg.on_ask,
+            "ask_timeout_seconds": cfg.ask_timeout_seconds,
+            "servers": {name: ser(s) for name, s in cfg.servers.items()},
+            "agents": {name: ser(a) for name, a in cfg.agents.items()},
+        }
+    else:
+        data = raw
+    print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_fuzz(args) -> int:
+    """Z (v0.7): policy coverage fuzz - find tool names/args that fall through
+    to defaults (no explicit rule), i.e. rules the agent could trip blindly."""
+    from .config import ConfigError
+    from .policy import PolicyEngine
+
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        print(f"agentgate: {e}", file=sys.stderr)
+        return 2
+    engine = PolicyEngine(config)
+
+    # candidate tool names: literal segments from rule patterns + fuzz tokens
+    import random
+
+    random.seed(args.seed)
+    tokens = []
+    for agent, apol in config.agents.items():
+        for server, spol in apol.servers.items():
+            for rule in spol.rules:
+                for part in rule.pattern.split("*"):
+                    if part:
+                        tokens.append(part)
+            if not spol.rules:
+                tokens.append(f"{server}--unmapped")
+    tokens += ["echo", "read", "write", "delete", "list", "ping", "get", "post",
+               "exec", "run", "search", "import", "sync", "update", "set"]
+    tokens += [f"{tokens[i % len(tokens)]}_{random.randint(0, 9999)}" for i in range(40)]
+
+    uncovered: list[tuple[str, str, str]] = []
+    covered: int = 0
+    servers = set(config.servers)
+    for apol in config.agents.values():
+        servers |= set(apol.servers)
+    for server in servers:
+        for agent in config.agents:
+            for name in tokens:
+                decision = engine.evaluate(agent, server, name, None)
+                if decision.rule.endswith("default") or decision.rule == "default_decision":
+                    uncovered.append((agent, server, name))
+                else:
+                    covered += 1
+    print(f"fuzz {len(servers)} server(s) x {len(config.agents)} agent(s): "
+          f"{covered} covered, {len(uncovered)} falling to default")
+    if uncovered and args.verbose:
+        for agent, server, name in uncovered[:50]:
+            print(f"  {agent}@{server}--{name}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agentgate",
@@ -749,6 +851,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_lint.add_argument("--config", required=True)
     p_lint.set_defaults(func=cmd_lint)
 
+    p_export = sub.add_parser("policy-export", help="export policy as stable JSON (diffable)")
+    p_export.add_argument("--config", required=True)
+    p_export.set_defaults(func=cmd_policy_export)
+
+    p_fuzz = sub.add_parser("check-fuzz", help="policy coverage fuzz: find unmapped tools")
+    p_fuzz.add_argument("--config", required=True)
+    p_fuzz.add_argument("--seed", type=int, default=0, help="deterministic fuzz seed (reproducible)")
+    p_fuzz.add_argument("--verbose", action="store_true")
+    p_fuzz.set_defaults(func=cmd_fuzz)
+
     p_report = sub.add_parser("report", help="aggregate audit into a per agent/tool decision report")
     p_report.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     p_report.add_argument("--since", help="only decisions after this ISO 8601 timestamp")
@@ -757,6 +869,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--tool", help="only decisions for this tool (bare name)")
     p_report.add_argument("--grants", action="store_true",
                           help="delegation usage view (grant_id -> call count)")
+    p_report.add_argument("--by-rule", action="store_true",
+                          help="group decisions by matched rule (denial attribution)")
     p_report.set_defaults(func=cmd_report)
 
     p_demo = sub.add_parser("demo", help="one-command demo (gateway + demo upstream + scripted client)")

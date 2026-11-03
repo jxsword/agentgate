@@ -37,3 +37,10 @@ agents:
               ttl_seconds: 600           # approving once grants 10 minutes of identical calls
               bind: tool+args            # grant is bound to the exact arguments
           "delete_file": deny            # never, for anyone
+
+# policy-embedded self-tests: agentgate check --config policies/example.yaml
+# --agent claude-code --selftest  (CI gate against policy drift)
+tests:
+  - {server: demo, tool: echo, arguments: {text: x}, expect: allow}
+  - {server: demo, tool: delete_file, arguments: {path: sandbox/x}, expect: deny}
+  - {server: demo, tool: write_file, arguments: {path: sandbox/x, content: y}, expect: ask}
