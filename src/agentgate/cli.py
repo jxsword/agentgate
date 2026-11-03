@@ -722,6 +722,8 @@ def cmd_fuzz(args) -> int:
     # candidate tool names: literal segments from rule patterns + fuzz tokens
     import random
 
+    # deterministic PRNG on purpose (not a security primitive): reproducible fuzz
+    # runs are the feature; Mimosa flags CWE-330 here as a known false positive
     random.seed(args.seed)
     tokens = []
     for agent, apol in config.agents.items():
