@@ -77,27 +77,26 @@ async def test_metrics_endpoint(workdir):
         from contextlib import asynccontextmanager
 
         base = f"http://127.0.0.1:{port}"
-        deadline = time.monotonic() + 20
-        session = None
-        while time.monotonic() < deadline and session is None:
-            try:
-                cm = streamable_http_client(f"{base}/mcp")
-                read, write = await asyncio.wait_for(cm.__aenter__(), timeout=3)
-                sm = ClientSession(read, write)
-                await sm.__aenter__()
-                await asyncio.wait_for(sm.initialize(), timeout=5)
-                session = (cm, sm)
-            except Exception:  # noqa: BLE001
+
+        @asynccontextmanager
+        async def open_session():
+            connected = False
+            deadline = time.monotonic() + 20
+            while not connected and time.monotonic() < deadline:
                 try:
-                    if "sm" in dir() and sm:
-                        await sm.__aexit__(None, None, None)
+                    async with streamable_http_client(f"{base}/mcp") as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await asyncio.wait_for(session.initialize(), timeout=5)
+                            connected = True
+                            yield session
                 except Exception:  # noqa: BLE001
-                    pass
-                session = None
-                await asyncio.sleep(0.4)
-        assert session, "gateway did not come up"
-        cm, sm = session
-        try:
+                    if connected:
+                        raise
+                    await asyncio.sleep(0.4)
+            if not connected:
+                raise RuntimeError("gateway did not come up")
+
+        async with open_session() as sm:
             await sm.call_tool("demo--echo", {"text": "m1"})
             await sm.call_tool("demo--delete_file", {"path": "x"})  # denied
             metrics = None
@@ -112,9 +111,6 @@ async def test_metrics_endpoint(workdir):
             assert 'outcome="allowed"' in metrics
             assert 'outcome="denied"' in metrics
             assert 'agentgate_upstreams_up{server="demo"} 1' in metrics
-        finally:
-            await sm.__aexit__(None, None, None)
-            await cm.__aexit__(None, None, None)
     finally:
         proc.terminate()
         proc.wait(timeout=10)
